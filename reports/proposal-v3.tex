@@ -1,0 +1,162 @@
+\documentclass[10pt, twocolumn, a4paper]{article}
+%\usepackage{usenix,epsfig,endnotes}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{mathptmx}  % times roman, including math (where possible)
+\usepackage{enumitem}
+\usepackage{fancyvrb}
+\usepackage[ruled, vlined]{algorithm2e}
+%\usepackage{hyperref}
+
+\title{\Large \bf Project Description Revised}
+\author{Jinliang Wei}
+\date{April 1, 2013}
+
+\newtheorem{fact}{Fact}
+\newtheorem{property}{Property}
+
+\setenumerate{nolistsep}
+\begin{document}
+\maketitle
+
+\section{Paper Organization}
+This document is organized as the following:
+\begin{enumerate}
+\item Describe an abstract problem which represents a class of problems that the proposed system aims to solve. The problems presented in later sections (page rank, LDA with gibbs sampling and matrix factorization) are all concrete examples of this class. I believe this abstraction is expressive enough to represent a wide class of real problems. Moreover, I removed the notion of "table" as it is not necessary and it invites questions about the particular data organization paradigm.
+\item Describe how existing systems solve this problem and their limitations. The systems discussed here include: 1) MapReduce, 2) GraphLab and 3) GraphChi. I also describe how the proposed system solves this problem.
+\item Describe the design of the proposed system which aims to solve the abstract problem when memory is limited. Especially, describe how it handles intermediate results whose size may grow and shrink during the execution.
+\item Describe two real problems: LDA with gibbs samplng and matrix factorization. Present the pseudo-code for solving these problems on GraphChi and the proposed system.
+\end{enumerate}
+
+\section{The Abstract Problem}
+\label{sec:prob}
+The abstract problem consisits of an unordered set of $N$ data records $D = \{d_1, d_2, ..., d_N\}$. Each data record in $D$ is uniquely identified with an ID (for example, its index). Throughout this paper, we use its index as each data record's ID. The algorithm for solving this problem can be stated as the pseudo-code below:
+\begin{Verbatim}[samepage=true]
+loop until complete; do //outer loop
+    foreach d_i in D_K; do //inner loop
+        D_ia = f(d_i, D_i)
+    end
+end loop
+\end{Verbatim}
+
+$D_K$ is a subset of $D$, wihch must be found before running the algorithm and $D_K = \{d_1, d_2, ..., d_K\}$. $D_i$ is a subset of $D$ that computing $f()$ on $d_i$ depends on. Computing $f()$ on $d_i$ may change the value of $d_i$ and data records in $D_i$ and may add or remove fields from them. $f()$ may also create new data records and remove data records from $D_i$. $D_{ia}$ represents the added data records.
+
+%TODO: create a list to make what f() does clear.
+
+Note that:
+\begin{enumerate}
+\item Data records in $D$ can be heterogenous.
+\item ID for data records can be anything as long as they are unique.
+\end{enumerate}
+
+The problem space represented by the abstract problem can be divided into two sub-classes:
+
+\begin{description}
+\item[Class 1] Any two $f(d_i, D_i)$ and $f(d_j, D_j)$ can run concurrently. A bulk synchronization can be done at the end of each inner loop to synchronize $D$.
+\item[Class 2] Certain pair of $f(d_i, D_i)$ and $f(d_j, D_j)$ cannot be computed concurrently. One possible reason might be data dependency.
+\end{description}
+
+To describe the solution and limitation of various systems, I borrow the notion of dependency matrix here to assist description. A dependency matrix is a $N \times K$ matrix, denoted as $L$. A row $l_i$ in $L$ represents the data records whose computation depends on $d_i$. More formally, if the $j$th element $l_i^j$ in $l_i$ equals to $1$, then $d_i$ belongs to $D_j$ for $f(d_j, D_j)$.  A column $l^i$ in $L$ represents the data records that computing $f()$ on $d_i$ depends on. A example of dependency matrix can be found in Figure~\ref{fig:depm}.
+
+\begin{figure}[h!]
+  \begin{center}
+  \begin{tabular}{c c c}
+    0 & 0  & 1 \\
+    0 & 0  & 1 \\
+    1 & 1  & 0 \\
+    1 & 0  & 0
+  \end{tabular}
+  \end{center}
+  \caption{An example of dependency matrix for $D = \{d_1, d_2, d_3, d_4\}$, and $D_K = \{d_1, d_2, d_3\}$. According to the first row, $d_1 \in D_3$. According to the first column, $D_1 = \{d_3, d_4\}$.}
+  \label{fig:depm}
+\end{figure}
+
+
+\subsection{MapReduce}
+
+Here we use a general model of MapReduce. Compared to Hadoop, the general model additionally supports two features:
+
+\begin{enumerate}
+\item Any number of iterations of Map-Reduce are allowed.
+\item Any map, shuffle, and reduce can be disabled.
+\end{enumerate}
+
+\begin{fact}
+
+If $L$ is pre-determined, the problem of class 1 can be solved by MapReduce.
+
+If each row $l_i$ or each column $l^j$ can be solely determined by $d_i$, this problem can be solved by MapReduce.
+
+\end{fact}
+
+If each row $l_i$ can be solely determined by $d_i$, the following pseudo-code demonstrates how MapReduce solves the problem. Suppose $l_i$ can be computed by function $gr(d_i)$. The key idea is that in map, a $d_i$ is duplicated for each $d_j$ that depends on it and the same key is assigned. In the shuffling phase, they will be grouped together.
+ 
+\begin{Verbatim}
+
+map_1(d_i, outlist){
+  l_i = gr(d_i)
+  foreach l_ij in l_i; do
+      if l_ij == 1; then
+          outlist.add(<j, d_i>)
+      end
+  end
+  outlist.add(<i, d_i>)
+}
+
+reduce_1(inlist, outlist){
+  initialize d_i, D_i
+  foreach <i, d_x> in inlist; do
+      if x == i; then
+          d_i == d_x
+      else
+         D_i.add(d_x)
+      end
+      D_ia = f(d_i, D_i)
+      foreach d_x in D_i; do
+          outlist.add(x, d_x)
+      end
+      foreach d_x in D_ia; do
+          outlist.add(x, d_x)
+      end
+      outlist.add(i, d_i)
+  end
+}
+
+//reduce_2() is needed to aggregate changes made to data records
+reduce_2(inlist, outlist){
+  foreach
+  
+}
+
+\\solution
+solve(){
+  loop until complete; do
+      mapreduce_run(map_1, reduce_1)
+  end loop
+}
+
+\end{Verbatim}
+
+If each column $r^i$ can be solely determined by $d_i$, the following pseudo-code demonstrates how MapReduce solves the problem. Suppose $l^i$ can be computed by function $gc(d_i)$. The key idea is that in the first map, a $d_i$ is duplicated for each $d_j$ that it depends on and the key is the $d_j$'s ID, so in the first reduce phase, a data record can find all the data records that depend on it and make appropriate duplication.
+
+\begin{Verbatim}
+
+map_1(d_i, outlist){
+  l_i = gc(d_i)
+  foreach l_ji in l_i; do
+      if l_ji == 1; then
+          outlist.add(<j, d_i>)
+      end
+  end
+  outlist.add(<i, d_i>) //I need to add myself to the output list
+}
+
+reduce_1(inlist){
+  foreach <i, d_x> in inlist; do
+}
+\end{Verbatim}
+
+\end{document}

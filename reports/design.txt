@@ -1,0 +1,22 @@
+
+Major components (classes):
+
+I. Overview
+
+1. Buffer
+
+Basic memory management uint. Minimam size: 8 MB. Can be configured by buffer_size.
+
+2. IOThread
+
+A single thread that manages disk (or network) IO to read data into buffer or write data from buffer. Maintains a queue between itself and upper-level component to receive tasks. Use callbacks to indicate that work is done.
+
+3. BufferManager
+
+Manage a give chunk of memory. The memory size is specified when the BufferManager object is created. Memory chunk is organized as series of buffers.
+
+4. BufferScheduler
+
+Schedule the blocks that are to be read or written.
+
+5. DataRecordManager

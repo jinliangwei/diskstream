@@ -1,0 +1,157 @@
+\documentclass[10pt, twocolumn, a4paper]{article}
+%\usepackage{usenix,epsfig,endnotes}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{mathptmx}  % times roman, including math (where possible)
+\usepackage{enumitem}
+\usepackage[ruled, vlined]{algorithm2e}
+%\usepackage{hyperref}
+
+\title{\Large \bf Project Description Revised}
+\author{Jinliang Wei}
+\date{April 1, 2013}
+
+\newtheorem{descrp}{Description}
+\newtheorem{property}{Property}
+
+\setenumerate{nolistsep}
+\begin{document}
+\maketitle
+
+This project aims to present a mechanism of using disk streaming technique to solve large machine learning and data mining problems when memory is scarce. In Section~\ref{sec:problem}, I describe the class of out-core problems that the proposed system aims to solve and give several concrete examples that belong to this class. In Section~\ref{sec:system}, I describe the proposed disk-streaming based system. In Section~\ref{sec:related}, I relate the proposed solution to two existing solutions which solve machine learning or data mining problems where the problem does not fit into memory. In Section~\ref{sec:generalize}, I describe the challenges involved in generalizing the syetem solution for solving broader set of problems.
+
+\section{Problem Description}
+\label{sec:problem}
+The class of problems that the proposed system aims to solve is described below:
+
+\begin{descrp}
+Solving the problem may and may only involve the following data structures:
+
+\begin{enumerate}
+\item A set of parameters $P$. 
+\item A major table $M$.
+\item A set of streaming tables $S$. $S_j$ denotes the $j-th$ table in $S$.
+\end{enumerate} 
+Parameters $P$ is a small set of data that may store some intermediate results and executation status. We assume that its size is very small comparing to available amount of memory. Table here is essentially a large set of data items, where each data item is considered as a row. Note that the size of either or both tables can exceed the size of available physical memory.
+
+An iterative algorithm is used to solve the problem. In each iteration, the solver walks through the major table $M$ and updates each row. Updating one row in $M$ may require read and/or write access to parameter set $P$ and certain rows of $S$ and/or $M$. Thus updating one row $m_i$ in $M$ can be represented as the following function:
+
+\begin{align*}
+update(m_i, P, R_i)
+\end{align*}
+
+where,$R_j$ is the corresponding set of rows in streaming tables $S$ and/or major table $M$.
+
+The algorithm can be represented as below:
+
+\begin{algorithm}[H]
+\While{problem not solved}{
+  \For{$m_i \in M$}{
+    $update(m_i, P, R_i)$
+  }
+}
+\caption{Solution\label{IR}}
+\end{algorithm}
+
+\end{descrp}
+
+For the proposed system to work, the problem's solution is required to have one additional properties, which many problems do support as shown by the examples.
+
+\begin{property}
+Even though updaing one row in $M$ requires access to $P$ and $R_i$, the $update()$ function can be done by iteratively accessing each row independently in $P$ and $R_i$. That is, the $update()$ function can be expressed as the following algorithm:
+
+\begin{algorithm}
+  \For{$r \in P$}{
+    $update\_row(m_i, r)$
+  }
+  \For{$r \in R_i$}{
+    $update\_row(m_i, r)$
+  }
+  $aggregate(m_i)$
+\caption{$update()$ Function}
+\end{algorithm}
+\end{property}
+
+To justify the expressiveness of this class of problems, I show how three famous algorithms fit into this problem description.
+
+\subsection{Page Rank}
+In one iteration, the algorithm iterates through all vertices in the graph and updates each vertex's rank by the following equation:
+\begin{align*}
+rank_{new} = (1 - d) + d*\sum_{r_i \in Nr}r_i
+\end{align*}
+where $Nr$ represents the set of vertices that link to the current vertex and $d$ is a constant. 
+
+We treat the set of vertices as our major table $M$, where each row represents a vertex. A row also contains the rank of the vertex and link information. Even though we need all adjacent vertices' ranks to update a vertex's rank, the compuation can be done by partial sum. In that way, the $update()$ function can be done by iteratively accessing each adjacent vertex independently.
+
+\subsection{LDA with Gibbs Sampling}
+
+More details to be added.
+
+\subsection{ALS Matrix Factorization}
+
+More details to be added.
+
+\section{System Solution}
+\label{sec:system}
+
+In one sentence, the proposed system works by keeping a large faction of major table in memory and streaming in rows of streaming tables.
+
+\begin{algorithm}
+  \SetKwInOut{Input}{input}\SetKwInOut{Output}{output}
+  \Input{Total memory budget: $MB$; \\ Major table $M$; \\ Set of streaming tables $S$;}
+  assign memory budget $MB_S$ (several MBs) for streaming buffer;
+  $MB_M = MB - MB_S$;
+  $N = sizeof(M)/MB_M$
+  \For{$i \rightarrow 1 to N$}{
+    load in byte range from $MB_M(i-1)$ to $MB_Mi$ from $M$
+  }
+\end{algorithm}
+
+The following problems need to be addressed in order for the system to achieve good performance.
+
+\begin{enumerate}
+\item In many cases, including the three examples described above, most rows in the streaming table are only related to a small set of rows in the major table. Thus, 
+
+\item Mask disk I/O with computation
+
+\item Lock-free multi-threading
+
+\end{enumerate}
+
+The following factors are related to the expressiveness of the system.
+
+\subsection{Non-uniform row rize}
+
+Add a size field for each row..
+
+\subsection{Dynamic row data}
+
+Add a size field for each row.
+
+\subsection{Add/Remove Rows}
+
+Natrually supports.
+
+\subsection{Dynamic Correlation}
+
+Removing is easy. Adding can be hard.
+
+\section{Related Work}
+\label{sec:related}
+
+\subsection{GraphChi}
+Vertices can be treated as the major table. Edges are treated as the streaming table. Each row in streaming table has exactly two related major table rows.
+
+The first version of lazy table only supports uniform and static vertex and edge data type. Dynamic data type is added in the second version. But there is no repartition of the data. Adding edges and/or vertices is supported but the performance is only half. Because data is pre-partitioned, change is much more difficult.
+
+\subsection{Dual Cache}
+
+Alex's dual cache paper also uses streaming.
+
+\section{Challenges for Further Generalization}
+\label{sec:generalize}
+
+\end{document}
