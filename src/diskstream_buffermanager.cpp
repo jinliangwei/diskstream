@@ -493,11 +493,6 @@ namespace diskstream{
       }
 
     case BufMgrSequenExtern:
-       std::cout << "curr_file_idx = " << curr_file_idx
-                << " access_file_idx = " << access_file_idx
-                << " access_db_id = " << access_db_id
-                << " fmax_db_ids[access_file_idx] = " << fmax_db_ids[access_file_idx]
-                << std::endl;
      if((uint32_t) access_file_idx == seqextern_fullnames.size() - 1
          && access_db_id == fmax_db_ids[access_file_idx]){
         return true;

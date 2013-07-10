@@ -87,6 +87,9 @@ namespace diskstream {
      int suc;
      if(buffer == NULL) return -1;
 
+     suc = task_buffer_mgr->init(internbase + ".tasks");
+     if(suc < 0) return -1;
+
      int32_t task_buffs_idx = 0;
      curr_task_st = 0;
      num_my_task_buffs = 0;
@@ -94,9 +97,8 @@ namespace diskstream {
      my_task_buffs[task_buffs_idx] = buffer;
      ++num_my_task_buffs;
      ++task_buffs_idx;
-     std::cout << "num_my_task_buffs = " << num_my_task_buffs << std::endl;
-     task_buff_acc.set_mem(buffer->get_dataptr(), buffer->get_data_capacity());
 
+     task_buff_acc.set_mem(buffer->get_dataptr(), buffer->get_data_capacity());
      while(task_id < (int32_t) num_total_tasks){
        Word *w;
        try{
@@ -112,9 +114,8 @@ namespace diskstream {
          // If so, set last_buff_putback to true and subtract one 1 from num_my_task_buffs
          // so I know I'm not holding the last buffer.
          if(e == DataCreateInsufficientMem){
-           std::cout << "Creating tasks!!!!!!! Insufficient memory!" << std::endl;
            if(num_task_buffs <= (num_my_task_buffs + KMinTaskBuffsMgr)
-            /*  && num_total_task_buffs > num_task_buffs */){ // do not put back if memory is sufficient to hold
+            && num_total_task_buffs > num_task_buffs){ // do not put back if memory is sufficient to hold
                                                          // all tasks
              suc = task_buffer_mgr->putback(buffer, BufPolicyWriteBack);
              assert(suc == 0);
@@ -134,7 +135,6 @@ namespace diskstream {
              my_task_buffs[task_buffs_idx] = buffer;
              ++task_buffs_idx;
              ++num_my_task_buffs;
-             std::cout << "added one to num_my_task_buffs, num_my_task_buffs = " << num_my_task_buffs << std::endl;
            }
          }else{
            assert(1);
@@ -152,6 +152,7 @@ namespace diskstream {
      for(ti = 0; ti < num_my_task_buffs; ++ti){
        curr_task_ed += my_task_buffs[ti]->get_data_size()/Word::usize(num_topics);
      }
+     task_buffer_mgr->stop();
      return 0;
    }
 
@@ -163,6 +164,12 @@ namespace diskstream {
      char *linebuf = new char[max_line_len];
      Document *doc;
      bool last_buff_putback = false;
+
+     suc = extern_data_loader->init_sequen_extern(extern_data_paths);
+     if(suc < 0) return -1;
+
+     suc = data_buffer_mgr->init(internbase + ".data");
+     if(suc < 0) return -1;
 
      int32_t data_buffs_idx = 0;
      data_buff_acc.set_mem(data_buff->get_dataptr(), data_buff->get_data_capacity());
@@ -268,6 +275,155 @@ namespace diskstream {
      return 0;
    }
 
+   int LdaExecutorInit::output_task_buffers(){
+     char *templine = new char[max_line_len];
+     int suc = 0;
+     int32_t tbuff_idx;
+     MemChunkAccesser buff_acc, extern_buff_acc;
+
+     extern_data_writer->init_write_extern(internbase + ".tasks.extern");
+     Buffer *extern_buff = extern_data_writer->get_buffer();
+     extern_buff_acc.set_mem(extern_buff->get_db_ptr(), extern_buff->get_db_size());
+
+     if(num_my_task_buffs < num_total_task_buffs){
+       task_buffer_mgr->init_sequen(internbase + ".tasks", num_my_task_buffs, 1);
+     }
+
+     int32_t num_task_buffs_accessed = 0;
+     Word *w;
+     do{
+       for(tbuff_idx = 0; tbuff_idx < num_my_task_buffs; ++tbuff_idx){
+         buff_acc.set_mem(my_task_buffs[tbuff_idx]->get_dataptr(), my_task_buffs[tbuff_idx]->get_data_size());
+         while(buff_acc.avai_size() > 0){
+           w = (Word *) buff_acc.curr_ptr();
+           sprintf(templine, "%d\n", w->get_task_id());
+           if((uint) extern_buff_acc.avai_size() < strlen(templine)){
+             extern_buff->set_valid_db_size(extern_buff->get_db_size() - extern_buff_acc.avai_size());
+             suc = extern_data_writer->putback(extern_buff, BufPolicyWriteBack);
+             assert(suc == 0);
+             extern_buff = extern_data_writer->get_buffer();
+             assert(extern_buff != NULL);
+             extern_buff_acc.set_mem(extern_buff->get_dataptr(), extern_buff->get_data_capacity());
+           }
+           memcpy(extern_buff_acc.curr_ptr(), templine, strlen(templine));
+           suc = extern_buff_acc.advance(strlen(templine));
+           assert(suc == 0);
+           suc = buff_acc.advance(w->size());
+           assert(suc == 0);
+         }
+       }
+
+       num_task_buffs_accessed += num_my_task_buffs;
+
+       if(num_task_buffs_accessed < num_total_task_buffs){
+         for(tbuff_idx = 0; tbuff_idx < num_my_task_buffs; ++tbuff_idx){
+           task_buffer_mgr->putback(my_task_buffs[tbuff_idx], BufPolicyWriteBack);
+         }
+         num_my_task_buffs = 0;
+
+         if(task_buffer_mgr->reached_end()) break;
+
+         while(!task_buffer_mgr->reached_end() && num_my_task_buffs < num_task_buffs){
+           my_task_buffs[num_my_task_buffs] = task_buffer_mgr->get_buffer();
+           assert(my_task_buffs[num_my_task_buffs] != NULL);
+           ++num_my_task_buffs;
+         }
+       }
+     }while(num_task_buffs_accessed < num_total_task_buffs);
+
+     extern_buff->set_valid_db_size(extern_buff->get_db_size() - extern_buff_acc.avai_size());
+     extern_data_writer->putback(extern_buff, BufPolicyWriteBack);
+     extern_data_writer->stop();
+     delete templine;
+     return 0;
+   }
+
+   int LdaExecutorInit::output_data_buffers(){
+     char *templine = new char[max_line_len];
+     MemChunkAccesser buff_acc, extern_buff_acc;
+     extern_data_writer->init_write_extern(internbase + ".data.extern");
+
+     Buffer *extern_buff = extern_data_writer->get_buffer();
+     extern_buff_acc.set_mem(extern_buff->get_db_ptr(), extern_buff->get_db_size());
+
+     int suc;
+     int32_t dbuff_idx;
+     Document *doc;
+     for(dbuff_idx = 0; dbuff_idx < num_my_init_data_buffs; ++dbuff_idx){
+       buff_acc.set_mem(my_init_data_buffs[dbuff_idx]->get_dataptr(),
+                       my_init_data_buffs[dbuff_idx]->get_data_size());
+       while(buff_acc.avai_size() > 0){
+         doc = (Document *) buff_acc.curr_ptr();
+         int32_t num_uwords;
+         const int32_t *uwords;
+         const int32_t *wcnts;
+         uwords = doc->get_task_list(num_uwords);
+         wcnts = doc->get_wcnt_list(num_uwords);
+         sprintf(templine, "%d", num_uwords);
+         int32_t i;
+         for(i = 0; i < num_uwords; ++i){
+           sprintf(templine + strlen(templine), " %d:%d", uwords[i], wcnts[i]);
+         }
+         int32_t len = strlen(templine);
+         templine[len] = '\n';
+         ++len;
+         if(extern_buff_acc.avai_size() < len){
+           std::cout << "Not enough memory for external data buffer" << std::endl;
+           extern_buff->set_valid_db_size(extern_buff->get_db_size() - extern_buff_acc.avai_size());
+           extern_data_writer->putback(extern_buff, BufPolicyWriteBack);
+           extern_buff = extern_data_writer->get_buffer();
+           assert(extern_buff != NULL);
+           extern_buff_acc.set_mem(extern_buff->get_db_ptr(), extern_buff->get_db_size());
+         }
+         memcpy(extern_buff_acc.curr_ptr(), templine, len);
+         extern_buff_acc.advance(len);
+         suc = buff_acc.advance(doc->size());
+         assert(suc == 0);
+       }
+     }
+
+     if(num_my_init_data_buffs < num_total_data_buffs){
+       data_buffer_mgr->stop();
+       data_buffer_mgr->init_sequen(internbase + ".data", num_my_init_data_buffs, 1);
+       Buffer *data_buff;
+       while(!data_buffer_mgr->reached_end()){
+         data_buff = data_buffer_mgr->get_buffer();
+         buff_acc.set_mem(data_buff->get_dataptr(),
+                              data_buff->get_data_size());
+         while(buff_acc.avai_size() > 0){
+           doc = (Document *) buff_acc.curr_ptr();
+           int32_t num_uwords;
+           const int32_t *uwords;
+           const int32_t *wcnts;
+           uwords = doc->get_task_list(num_uwords);
+           wcnts = doc->get_wcnt_list(num_uwords);
+           sprintf(templine, "%d", num_uwords);
+           int32_t i;
+           for(i = 0; i < num_uwords; ++i){
+             sprintf(templine + strlen(templine), " %d:%d", uwords[i], wcnts[i]);
+           }
+           int32_t len = strlen(templine);
+           templine[len] = '\n';
+           ++len;
+           if(extern_buff_acc.avai_size() < len){
+             extern_data_writer->putback(extern_buff, BufPolicyWriteBack);
+             extern_buff = extern_data_writer->get_buffer();
+             extern_buff_acc.set_mem(extern_buff->get_db_ptr(), extern_buff->get_db_size());
+           }
+           memcpy(extern_buff_acc.curr_ptr(), templine, len);
+           extern_buff->append_data_record(extern_buff_acc.curr_ptr(), len);
+           extern_buff_acc.advance(len);
+           suc = buff_acc.advance(doc->size());
+           assert(suc == 0);
+         }
+       }
+     }
+     extern_buff->set_valid_db_size(extern_buff->get_db_size() - extern_buff_acc.avai_size());
+     extern_data_writer->putback(extern_buff, BufPolicyWriteBack);
+     extern_data_writer->stop();
+     return 0;
+   }
+
    int LdaExecutorInit::init(int64_t _membudget, int32_t _buffsize, int32_t _num_words, int32_t _num_topics,
             std::string _datadir, std::vector<std::string> _extern_data_paths, std::string _internbase,
             int32_t _max_line_len){
@@ -309,11 +465,11 @@ namespace diskstream {
        extern_data_loader = new BufferManager(KNumExternDataBuffs*buffsize, buffsize, diskio);
        task_buffer_mgr = new BufferManager(num_task_buffs*buffsize, buffsize, diskio);
        data_buffer_mgr = new BufferManager(num_data_buffs*buffsize, buffsize, diskio);
+       extern_data_writer = new BufferManager(KNumExternDataBuffs*buffsize, buffsize, diskio);
      }catch(...){
        return -1;
      }
 
-     std::cout << "extern_data_loader, task_buffer_mgr, data_buffer_mgr are created successfully" << std::endl;
      try{
        my_task_buffs = new Buffer *[num_task_buffs];
        my_init_data_buffs = new Buffer *[num_data_buffs];
@@ -321,25 +477,10 @@ namespace diskstream {
        std::cout << "allocate memory failed" << std::endl;
        return -1;
      }
-
-     suc = extern_data_loader->init_sequen_extern(extern_data_paths);
-     if(suc < 0) return -1;
-
-     std::cout << "extern_data_loader init done" << std::endl;
-
-     suc = task_buffer_mgr->init(internbase + ".tasks");
-     if(suc < 0) return -1;
-
-     suc = data_buffer_mgr->init(internbase + ".data");
-     if(suc < 0) return -1;
-
      return 0;
    }
 
    int LdaExecutorInit::run(){
-
-     char *templine = new char[max_line_len];
-     std::cout << "LDA started running" << std::endl;
 
      int suc = init_task_buffers();
      if(suc < 0) return -1;
@@ -351,163 +492,12 @@ namespace diskstream {
      delete extern_data_loader;
      extern_data_loader = NULL;
 
-     // first write tasks to disk
-     int32_t tbuff_idx;
-     MemChunkAccesser buff_acc, extern_buff_acc;
+     suc = output_task_buffers();
+     if(suc < 0) return -1;
 
-     try{
-       extern_data_writer = new BufferManager(KNumExternDataBuffs*buffsize, buffsize, diskio);
-     }catch(...){
-       return -1;
-     }
+     suc = output_data_buffers();
+     if(suc < 0) return -1;
 
-     extern_data_writer->init_write_extern(internbase + ".tasks.extern");
-     Buffer *extern_buff = extern_data_writer->get_buffer();
-     extern_buff_acc.set_mem(extern_buff->get_db_ptr(), extern_buff->get_db_size());
-
-     if(num_my_task_buffs < num_total_task_buffs){
-       task_buffer_mgr->stop(); // must call stop to wait the writes to finish
-       task_buffer_mgr->init_sequen(internbase + ".tasks", num_my_task_buffs, 1);
-     }
-
-     int32_t num_task_buffs_accessed = 0;
-     Word *w;
-     do{
-       std::cout << "num_my_task_buffs = " << num_my_task_buffs << std::endl;
-
-       for(tbuff_idx = 0; tbuff_idx < num_my_task_buffs; ++tbuff_idx){
-         std::cout << "accessing task buffer tbuff_idx = " << tbuff_idx << std::endl;
-         buff_acc.set_mem(my_task_buffs[tbuff_idx]->get_dataptr(), my_task_buffs[tbuff_idx]->get_data_size());
-         while(buff_acc.avai_size() > 0){
-           w = (Word *) buff_acc.curr_ptr();
-           sprintf(templine, "%d\n", w->get_task_id());
-           //std::cout << "write w = " << w->get_task_id() << " templine = " << templine << std::endl;
-           if((uint) extern_buff_acc.avai_size() < strlen(templine)){
-             extern_buff->set_valid_db_size(extern_buff->get_db_size() - extern_buff_acc.avai_size());
-             suc = extern_data_writer->putback(extern_buff, BufPolicyWriteBack);
-             assert(suc == 0);
-             extern_buff = extern_data_writer->get_buffer();
-             assert(extern_buff != NULL);
-             extern_buff_acc.set_mem(extern_buff->get_dataptr(), extern_buff->get_data_capacity());
-           }
-           memcpy(extern_buff_acc.curr_ptr(), templine, strlen(templine));
-           suc = extern_buff_acc.advance(strlen(templine));
-           assert(suc == 0);
-           suc = buff_acc.advance(w->size());
-           assert(suc == 0);
-         }
-       }
-
-       num_task_buffs_accessed += num_my_task_buffs;
-
-       if(num_task_buffs_accessed < num_total_task_buffs){
-         for(tbuff_idx = 0; tbuff_idx < num_my_task_buffs; ++tbuff_idx){
-           task_buffer_mgr->putback(my_task_buffs[tbuff_idx], BufPolicyWriteBack);
-         }
-         num_my_task_buffs = 0;
-
-         std::cout << "check if task_buffer_mgr has reached the end" << std::endl;
-         if(task_buffer_mgr->reached_end()) break;
-         std::cout << "task_buffer_mgr has not reached the end" << std::endl;
-         //std::cout << "num_task_buffs = " << num_task_buffs << std::endl;
-         while(!task_buffer_mgr->reached_end() && num_my_task_buffs < num_task_buffs){
-           my_task_buffs[num_my_task_buffs] = task_buffer_mgr->get_buffer();
-           assert(my_task_buffs[num_my_task_buffs] != NULL);
-           ++num_my_task_buffs;
-           std::cout << "got a buffer from task_buffer_mgr, num_my_task_buffs = " << num_my_task_buffs << std::endl;
-         }
-       }
-     }while(num_task_buffs_accessed < num_total_task_buffs);
-
-     extern_buff->set_valid_db_size(extern_buff->get_db_size() - extern_buff_acc.avai_size());
-     extern_data_writer->putback(extern_buff, BufPolicyWriteBack);
-     extern_data_writer->stop();
-
-     extern_data_writer->init_write_extern(internbase + ".data.extern");
-     extern_buff = extern_data_writer->get_buffer();
-     extern_buff_acc.set_mem(extern_buff->get_db_ptr(), extern_buff->get_db_size());
-
-     int32_t dbuff_idx;
-     Document *doc;
-     std::cout << "num_my_init_data_buffs = " << num_my_init_data_buffs << std::endl;
-     for(dbuff_idx = 0; dbuff_idx < num_my_init_data_buffs; ++dbuff_idx){
-       std::cout << "accessing data bufer dbuff_idx = " << dbuff_idx << std::endl;
-       buff_acc.set_mem(my_init_data_buffs[dbuff_idx]->get_dataptr(),
-                       my_init_data_buffs[dbuff_idx]->get_data_size());
-       while(buff_acc.avai_size() > 0){
-         doc = (Document *) buff_acc.curr_ptr();
-         int32_t num_uwords;
-         const int32_t *uwords;
-         const int32_t *wcnts;
-         uwords = doc->get_task_list(num_uwords);
-         wcnts = doc->get_wcnt_list(num_uwords);
-         sprintf(templine, "%d", num_uwords);
-         int32_t i;
-         for(i = 0; i < num_uwords; ++i){
-           //std::cout << "strlen(templine) = " << strlen(templine) << std::endl;
-           sprintf(templine + strlen(templine), " %d:%d", uwords[i], wcnts[i]);
-         }
-         //std::cout << templine << std::endl;
-         //char c;
-         //std::cin >> c;
-         int32_t len = strlen(templine);
-         templine[len] = '\n';
-         ++len;
-         if(extern_buff_acc.avai_size() < len){
-           std::cout << "Not enough memory for external data buffer" << std::endl;
-           extern_buff->set_valid_db_size(extern_buff->get_db_size() - extern_buff_acc.avai_size());
-           extern_data_writer->putback(extern_buff, BufPolicyWriteBack);
-           extern_buff = extern_data_writer->get_buffer();
-           assert(extern_buff != NULL);
-           extern_buff_acc.set_mem(extern_buff->get_db_ptr(), extern_buff->get_db_size());
-         }
-         memcpy(extern_buff_acc.curr_ptr(), templine, len);
-         extern_buff_acc.advance(len);
-         suc = buff_acc.advance(doc->size());
-         assert(suc == 0);
-       }
-    }
-
-    if(num_my_init_data_buffs < num_total_data_buffs){
-      data_buffer_mgr->stop();
-      data_buffer_mgr->init_sequen(internbase + ".data", num_my_init_data_buffs, 1);
-      Buffer *data_buff;
-      while(!data_buffer_mgr->reached_end()){
-        data_buff = data_buffer_mgr->get_buffer();
-        buff_acc.set_mem(data_buff->get_dataptr(),
-                         data_buff->get_data_size());
-        while(buff_acc.avai_size() > 0){
-          doc = (Document *) buff_acc.curr_ptr();
-          int32_t num_uwords;
-          const int32_t *uwords;
-          const int32_t *wcnts;
-          uwords = doc->get_task_list(num_uwords);
-          wcnts = doc->get_wcnt_list(num_uwords);
-          sprintf(templine, "%d", num_uwords);
-          int32_t i;
-          for(i = 0; i < num_uwords; ++i){
-            sprintf(templine + strlen(templine), " %d:%d", uwords[i], wcnts[i]);
-          }
-          int32_t len = strlen(templine);
-          templine[len] = '\n';
-          ++len;
-          if(extern_buff_acc.avai_size() < len){
-            extern_data_writer->putback(extern_buff, BufPolicyWriteBack);
-            extern_buff = extern_data_writer->get_buffer();
-            extern_buff_acc.set_mem(extern_buff->get_db_ptr(), extern_buff->get_db_size());
-          }
-          memcpy(extern_buff_acc.curr_ptr(), templine, len);
-          extern_buff->append_data_record(extern_buff_acc.curr_ptr(), len);
-          extern_buff_acc.advance(len);
-          suc = buff_acc.advance(doc->size());
-          assert(suc == 0);
-        }
-      }
-    }
-    extern_buff->set_valid_db_size(extern_buff->get_db_size() - extern_buff_acc.avai_size());
-    extern_data_writer->putback(extern_buff, BufPolicyWriteBack);
-    extern_data_writer->stop();
-    delete templine;
     return 0;
    }
 

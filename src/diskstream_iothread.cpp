@@ -154,8 +154,6 @@ namespace diskstream{
     pollitems[2].socket = diskio->cancel_sock;
     pollitems[2].events = ZMQ_POLLIN;
 
-    //std::cout << "diskio thread is running" << std::endl;
-
     while(true){
       try {
         zmq::poll(pollitems, 3);
@@ -163,7 +161,6 @@ namespace diskstream{
         std::cout << "error from poll!" << std::endl;
         return NULL;
       }
-      //std::cout << "diskio thread get message!" << std::endl;
 
       if(pollitems[2].revents){
         int32_t cid;

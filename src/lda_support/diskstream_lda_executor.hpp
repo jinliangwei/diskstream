@@ -82,9 +82,13 @@ namespace diskstream {
 
     // uses data_buff_acc, which could be in any state before invoking this function
     int init_task_buffers();
-
-    // uses
     int init_data_buffers();
+
+    // can be called after initialization when all task buffers held are the first N buffers
+    // or can be called when all buffers have been put back to task_buffer_mgr
+    int output_task_buffers();
+    // can be called after initialization when all
+    int output_data_buffers();
 
   public:
    LdaExecutorInit();
