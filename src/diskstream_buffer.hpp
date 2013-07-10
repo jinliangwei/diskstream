@@ -13,39 +13,47 @@ namespace diskstream{
   // only placement new can be used
   class Buffer{
   private:
-    uint32_t bsize;                       // buffer size in bytes; should be multiple of MBs; max 3GB
+    int32_t bsize;                       // buffer size in bytes; should be multiple of MBs; max 2GB
     DataBlock *db;
-    uint32_t datasize;                    // size of part of the buffer that holds meaningful data
-                                          // this is not the size of the data stored; multiple of 512's
+    int32_t datasize;                    // size of part of the buffer that holds meaningful data
+                                          // this is not the size of the data actually stored;
+                                          // multiple of 512's, size of everything in DataBlock
     uint8_t *db_end;
     block_id_t dbid;
+    int32_t valid_db_size;                // DataBlock can be used to hold a chunk of data
+                                          // this chunk of data might not use the en
   public:
-    Buffer(uint32_t _bsize, int32_t _npartitions, block_id_t _dbid);
-    uint8_t *get_dataptr(uint32_t &_datafsize) const;
+    Buffer(int32_t _bsize, block_id_t _dbid);
+    uint8_t *get_dataptr(int32_t &_datafsize) const;
     uint8_t *get_dataptr() const;
-    int append_data_record(uint8_t *_st, uint32_t _size) const;
-    uint32_t get_num_data() const;
+    int append_data_record(uint8_t *_st, int32_t _size) const;
+    int32_t get_num_data() const;
     uint8_t *get_db_ptr() const;
-    uint32_t get_db_size() const;
+    int32_t get_db_size() const;
     block_id_t get_block_id() const;
-    uint32_t get_data_size() const;
+    int32_t get_data_size() const;
     void set_block_id(block_id_t _dbid);
+    int32_t get_data_capacity() const;
+    void set_valid_db_size(int32_t _vsize);
+    int32_t get_valid_db_size() const;
+
+    static int32_t get_db_size(int32_t _buffer_size);
+    static int32_t get_data_capacity(int32_t _buffer_size);
+    static Buffer *create_buffer(int32_t _bsize, block_id_t _dbid);
   };
 
   class DataBlock {
   private:
-    int32_t num_partitions;              // should only be power of 2
-    uint32_t partitions_list_offset;     // offset from the beginning of this object
-    uint32_t partitions_valid_offset;    // apply to all offsets
-    uint32_t data_offset;
-    uint32_t last_data_offset;
-    uint32_t dsize;                     // total size of data
-    uint32_t num_data;                  // total number of data records
+    int32_t data_offset;
+    int32_t last_data_offset;
+    int32_t dsize;                     // total size of data
+    int32_t num_data;                  // total number of data records
     friend class Buffer;
   public:
-    DataBlock(int32_t _npartitions);
-    int append_data_record(uint8_t *_st, uint32_t _size);
-    int partition();
+    DataBlock();
+    int append_data_record(uint8_t *_st, int32_t _size);
+
+    static int32_t get_data_capacity(int32_t _db_size);
   };
 
 

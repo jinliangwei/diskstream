@@ -12,7 +12,9 @@
 
 namespace diskstream {
   enum EMsgType {DiskIORead, DiskIOWrite, DiskIOReadDone, DiskIOWriteDone, DiskIOShutDown, DiskIOConn,
-                 DiskIOReadExternal, DiskIOWriteExternal, DiskIOReadExternalDone, DiskIOWriteExternalDone};
+                 DiskIOReadExternal, DiskIOWriteExternal, DiskIOReadExternalDone, DiskIOWriteExternalDone,
+                 DiskIOCancel, DiskIOWriteRead, DiskIOWriteReadDone, DiskIOReadNotDone, DiskIOReadExternalNotDone,
+                 DiskIOWriteReadWriteDone, DiskIOEnable};
 
   /*
    * DiskIORead/DiskIOWrite fields:
@@ -51,18 +53,36 @@ namespace diskstream {
    * DiskIOReadExternal:
    * 1. buffer address (Buffer *)
    * 2. full path to file (char[])
-   * 3. offset to read (uint32_t)
-   * 4. size to read (uint32_t)
+   * 3. offset to read (int32_t)
+   * 4. size to read
    *
    * DiskIOWriteExternal:
    * 1. buffer address (Buffer *)
    * 2. full path to file (char[])
-   * 3. offset to write (uint32_t)
-   * 4. size to write (uint32_t)
+   * 3. offset to write (int32_t)
+   * 4. size to write
    *
    * DiskIOReadExternalDone, DiskIOWriteExternalDone:
    * 1. buffer address (Buffer *)
    * 2. read bytes/success (negative for failure)
+   * */
+
+  /*
+   * DiskIOWriteRead, DiskIOWriteReadDone:
+   *
+   * They are used for sequential BufferManager to write back data then immediately read in another
+   * data block.
+   *
+   * DiskIOWriteRead:
+   *
+   * 1. buffer address (Buffer *)
+   * 2. base filename (char[]), must include the \0, same below
+   * 3. Read db id
+   *
+   * DiskIOWriteReadDone:
+   *
+   * 1. buffer address (Buffer *)
+   * 2. read bytes (if negative, failure)
    * */
 
   //const char *KDISKIO_ENDP = "inproc://diskio_endp";

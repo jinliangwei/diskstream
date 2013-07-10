@@ -2,6 +2,8 @@
 #include "diskstream_util.hpp"
 #include <errno.h>
 #include <iostream>
+#include <assert.h>
+#include <string.h>
 
 namespace diskstream {
   int32_t get_micro_second(timeval_t tv){
@@ -47,7 +49,126 @@ namespace diskstream {
       break;
     }
   }
+
+  bool RawTextParser::check_last_tok_valid(char *_textbuf, int32_t bsize){
+    char pot_delim = _textbuf[bsize - 1];
+    bool delim_match = false;
+    int i;
+    for(i = 0; i < (int) delim.size(); ++i){
+      if(pot_delim == delim.c_str()[i]){
+        delim_match = true;
+        break;
+      }
+    }
+    if(delim_match) return true;
+    return false;
+  }
+
+  RawTextParser::RawTextParser(int32_t _maxtok_size, std::string _delim):
+    textbuf(NULL),
+    maxtok_size(_maxtok_size + 1),
+    delim(_delim),
+    next_tok(NULL),
+    textbuf_size(0),
+    tempbuf(new char[maxtok_size + 1]), // 1 more char to accommodate '\0'
+    readtempbuf(false),
+    copied_size(0),
+    last_tok_valid(false){}
+
+  RawTextParser::~RawTextParser(){
+    delete[] tempbuf;
+  }
+
+  // the text in buffer can be very large, call strlen may be costly
+  // bszie is the number of valid chars in _textbuf, excluding '\0'
+  int RawTextParser::set_textbuf(char *_textbuf, int32_t _bsize){
+    if(textbuf != NULL){
+
+      assert(next_tok != NULL);
+      int32_t leftsize = strlen(next_tok);
+
+      assert(leftsize < maxtok_size); //TODO: if larger or equal, allocate a larger buffer.
+      memcpy(tempbuf, next_tok, leftsize);
+      copied_size = (maxtok_size - leftsize > _bsize) ? _bsize : (maxtok_size - leftsize);
+      char *copy_dst = tempbuf + leftsize;
+      memcpy(copy_dst, _textbuf, copied_size);
+      int32_t tempbuf_size = leftsize + copied_size;
+      tempbuf[tempbuf_size] = '\0';
+      readtempbuf = true;
+      last_tok_valid = check_last_tok_valid(tempbuf, maxtok_size);
+      next_tok = strtok(tempbuf, delim.c_str());
+
+      textbuf = _textbuf;
+      textbuf_size = _bsize;
+
+    }else{
+      textbuf = _textbuf;
+      textbuf_size = _bsize;
+      last_tok_valid = check_last_tok_valid(tempbuf, maxtok_size);
+      next_tok = strtok(textbuf, delim.c_str());
+    }
+    return 0;
+  }
+
+  int32_t RawTextParser::get_next(char *token){
+    if(next_tok == NULL) return 0;
+    char *localnext = strtok(NULL, delim.c_str());
+    int32_t tok_size;
+    if(localnext != NULL){
+      strcpy(token, next_tok);
+      next_tok = localnext;
+      tok_size = strlen(token);
+    }else{
+      //std::cout << "reached the end of the buffer!" << std::endl;
+      // changing buffer, so last_tok_valid, strtok must be re-evaluated
+      if(readtempbuf){
+        //std::cout << "reading from tempbuf end" << std::endl;
+        readtempbuf = false;
+        if(last_tok_valid){
+          //std::cout << "tempbuf last_tok_valid left in textbuf = " << (textbuf_size - copied_size) << std::endl;
+          strcpy(token, next_tok);
+          tok_size = strlen(token);
+          textbuf += copied_size;
+          last_tok_valid = check_last_tok_valid(textbuf, textbuf_size - copied_size);
+          next_tok = strtok(textbuf, delim.c_str());
+        }else{
+          if(copied_size < textbuf_size){
+            int32_t leftsize = strlen(next_tok);
+            assert(copied_size > leftsize);
+            textbuf += (copied_size - leftsize);
+            last_tok_valid = check_last_tok_valid(textbuf, textbuf_size - (copied_size - leftsize));
+            next_tok = strtok(textbuf, delim.c_str());
+            tok_size = get_next(token); // recursively call get_next() as there might be a valid token
+            // in textbuf
+          }else{
+            std::cout << "all data has been copied to tempbuf" << std::endl;
+            tok_size = 0;
+          }
+        }
+      }else{
+        //std::cout << "read from textbuf end" << std::endl;
+        if(last_tok_valid){
+          strcpy(token, next_tok);
+          next_tok = localnext;
+          tok_size = strlen(token);
+          textbuf = NULL;
+        }else{
+          tok_size = 0;
+        }
+      }
+    }
+    return tok_size;
+  }
+
+  int32_t RawTextParser::get_last(char *token){
+    if(next_tok != NULL){
+      std::cout << "get_last() get whatever is left" << std::endl;
+      strcpy(token, next_tok);
+      next_tok = NULL;
+      return strlen(token);
+    }else{
+      std::cout << "get_last() nothing to return" << std::endl;
+      return 0;
+    }
+  }
 }
-
-
-
