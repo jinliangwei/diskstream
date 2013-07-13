@@ -162,13 +162,62 @@ namespace diskstream {
 
   int32_t RawTextParser::get_last(char *token){
     if(next_tok != NULL){
-      std::cout << "get_last() get whatever is left" << std::endl;
+//    std::cout << "get_last() get whatever is left" << std::endl;
       strcpy(token, next_tok);
       next_tok = NULL;
       return strlen(token);
     }else{
-      std::cout << "get_last() nothing to return" << std::endl;
+      //std::cout << "get_last() nothing to return" << std::endl;
       return 0;
     }
   }
+
+  // return index for _val or index of the largest value that's less than _val
+  int32_t binary_search(const int32_t *_tlist, int32_t _len, int32_t _val){
+    if(_val < _tlist[0]) return -1;
+    int32_t st = 0;
+    int32_t ed = _len - 1;
+    int32_t m = (st + ed)/2;
+    // loop invariants (when the loop condition is tested):
+    // 1) st <= ed
+    // 2) st~ed contains _val or the index of the largest value who is less than _val
+    while(st < ed){
+      if(_tlist[m] == _val) return m;
+      else if(_tlist[m] > _val){
+        ed = m - 1;
+      }else{
+        assert(m < ed);
+        if(_tlist[m + 1] < _val){
+          st = m + 1;
+        }else if(_tlist[m + 1] == _val){
+          return m + 1;
+        }else{
+          return m;
+        }
+      }
+      m = (st + ed)/2;
+    }
+    return m;
+  }
+
+  int find_range(const int32_t *_tlist, int32_t _len, int32_t _least, int32_t _greatest,
+                 int32_t &_st, int32_t &_ed){
+    if(_least > _greatest) return -1;
+    if(_least > _tlist[_len - 1] || _greatest < _tlist[0]) return -1;
+
+    if(_least < _tlist[0]){
+      _st = 0;
+    }else{
+      _st = binary_search(_tlist, _len, _least);
+      if(_tlist[_st] < _least) ++_st;
+    }
+
+    if(_greatest > _tlist[_len - 1]){
+      _ed = _len;
+    }else{
+      _ed = binary_search(_tlist, _len, _greatest) + 1;
+    }
+    return 0;
+  }
+
 }

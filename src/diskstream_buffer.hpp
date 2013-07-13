@@ -21,7 +21,7 @@ namespace diskstream{
     uint8_t *db_end;
     block_id_t dbid;
     int32_t valid_db_size;                // DataBlock can be used to hold a chunk of data
-                                          // this chunk of data might not use the en
+                                          // this chunk of data might not use the DataBlock format
   public:
     Buffer(int32_t _bsize, block_id_t _dbid);
     uint8_t *get_dataptr(int32_t &_datafsize) const;
@@ -36,6 +36,7 @@ namespace diskstream{
     int32_t get_data_capacity() const;
     void set_valid_db_size(int32_t _vsize);
     int32_t get_valid_db_size() const;
+    int reset_data_block();
 
     static int32_t get_db_size(int32_t _buffer_size);
     static int32_t get_data_capacity(int32_t _buffer_size);
@@ -52,19 +53,8 @@ namespace diskstream{
   public:
     DataBlock();
     int append_data_record(uint8_t *_st, int32_t _size);
-
+    int reset();
     static int32_t get_data_capacity(int32_t _db_size);
-  };
-
-
-  class DataRecord{
-  public:
-    void *next;
-    DataRecord();
-    virtual ~DataRecord();
-    virtual void *get_next();
-    friend class DataBlock;
-    friend class Buffer;
   };
 }
 

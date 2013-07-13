@@ -35,10 +35,16 @@ namespace diskstream {
     return 0;
   }
 
+  int DataBlock::reset(){
+    last_data_offset = data_offset;
+    dsize = 0;
+    num_data = 0;
+    return 0;
+  }
+
   int32_t DataBlock::get_data_capacity(int32_t _db_size){
     return _db_size - sizeof(DataBlock);
   }
-
 
   Buffer::Buffer(int32_t _bsize, block_id_t _dbid):
     bsize(_bsize),
@@ -122,5 +128,9 @@ namespace diskstream {
   }
   int32_t Buffer::get_valid_db_size() const{
     return valid_db_size;
+  }
+
+  int Buffer::reset_data_block(){
+    return db->reset();
   }
 }

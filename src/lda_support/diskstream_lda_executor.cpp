@@ -3,8 +3,11 @@
 #include <assert.h>
 #include <sstream>
 #include <iostream>
+#include <fstream>
+#include <limits.h>
 
 #include "diskstream_lda_executor.hpp"
+#include "../diskstream_program.hpp"
 
 namespace diskstream {
   LdaExecutorInit::LdaExecutorInit():
@@ -15,6 +18,7 @@ namespace diskstream {
        zmq_ctx(NULL),
        diskio(NULL),
        textparser(NULL),
+       exemode(ExeInitRun),
        membudget(0),
        buffsize(0),
        num_total_tasks(0),
@@ -30,8 +34,7 @@ namespace diskstream {
        num_total_data_buffs(0),
        num_my_task_buffs(0),
        my_task_buffs(NULL),
-       curr_task_st(0),
-       curr_task_ed(0){}
+       program(NULL){}
 
    LdaExecutorInit::~LdaExecutorInit(){
      if(extern_data_loader != NULL){
@@ -69,29 +72,32 @@ namespace diskstream {
      }
 
      if(my_init_data_buffs != NULL){
-       delete my_init_data_buffs;
+       delete[] my_init_data_buffs;
        my_init_data_buffs = NULL;
      }
 
      if(my_task_buffs != NULL){
-       delete my_task_buffs;
+       delete[] my_task_buffs;
        my_task_buffs = NULL;
      }
+   }
+
+   std::string LdaExecutorInit::get_status_file_name(std::string _datadir, std::string _internbase){
+     return _datadir + "/" + _internbase + ".status";
    }
 
    int LdaExecutorInit::init_task_buffers(){
      MemChunkAccesser task_buff_acc;
      int32_t task_id = 0;
-     Buffer *buffer = task_buffer_mgr->get_buffer();
+     Buffer *buffer;
      bool last_buff_putback = false;
      int suc;
+
+     buffer = task_buffer_mgr->get_buffer();
+     assert(buffer != NULL);
      if(buffer == NULL) return -1;
 
-     suc = task_buffer_mgr->init(internbase + ".tasks");
-     if(suc < 0) return -1;
-
      int32_t task_buffs_idx = 0;
-     curr_task_st = 0;
      num_my_task_buffs = 0;
      buffer->set_block_id(task_buffs_idx);
      my_task_buffs[task_buffs_idx] = buffer;
@@ -147,29 +153,19 @@ namespace diskstream {
        assert(suc == 0);
        --num_my_task_buffs;
      }
-     int32_t ti;
-     curr_task_ed = 0;
-     for(ti = 0; ti < num_my_task_buffs; ++ti){
-       curr_task_ed += my_task_buffs[ti]->get_data_size()/Word::usize(num_topics);
-     }
-     task_buffer_mgr->stop();
      return 0;
    }
 
    int LdaExecutorInit::init_data_buffers(){
      MemChunkAccesser data_buff_acc;
-     Buffer *extern_buff, *data_buff = data_buffer_mgr->get_buffer();
+     Buffer *extern_buff, *data_buff;
      int32_t datasize, line_len;
      int suc;
      char *linebuf = new char[max_line_len];
      Document *doc;
      bool last_buff_putback = false;
 
-     suc = extern_data_loader->init_sequen_extern(extern_data_paths);
-     if(suc < 0) return -1;
-
-     suc = data_buffer_mgr->init(internbase + ".data");
-     if(suc < 0) return -1;
+     data_buff = data_buffer_mgr->get_buffer();
 
      int32_t data_buffs_idx = 0;
      data_buff_acc.set_mem(data_buff->get_dataptr(), data_buff->get_data_capacity());
@@ -203,7 +199,10 @@ namespace diskstream {
                suc = data_buffer_mgr->putback(data_buff, BufPolicyWriteBack);
                assert(suc == 0);
                if(suc < 0) return -1;
-               std::cout << "put back data_buff = " << (void *) data_buff << std::endl;
+               std::cout << "put back data_buff = " << (void *) data_buff
+                         << " block_id = " << data_buff->get_block_id()
+                         << " data size = " << data_buff->get_data_size()
+                         << " data capacity = " << data_buff->get_data_capacity() << std::endl;
                data_buff = data_buffer_mgr->get_buffer();
                assert(data_buff != NULL);
                if(data_buff == NULL) return -1;
@@ -245,7 +244,9 @@ namespace diskstream {
              suc = data_buffer_mgr->putback(data_buff, BufPolicyWriteBack);
              assert(suc == 0);
              if(suc < 0) return -1;
-             std::cout << "put back data_buff = " << (void *) data_buff << std::endl;
+             std::cout << "put back data_buff = " << (void *) data_buff
+                       << " block_id = " << data_buff->get_block_id()
+                       << " data size = " << data_buff->get_data_size() << std::endl;
              data_buff = data_buffer_mgr->get_buffer();
              assert(data_buff != NULL);
              if(data_buff == NULL) return -1;
@@ -272,28 +273,33 @@ namespace diskstream {
        assert(suc == 0);
        --num_my_init_data_buffs;
      }
+     extern_data_loader->stop();
      return 0;
    }
 
-   int LdaExecutorInit::output_task_buffers(){
+   int LdaExecutorInit::output_task_buffers(std::string _extern_name){
      char *templine = new char[max_line_len];
      int suc = 0;
      int32_t tbuff_idx;
      MemChunkAccesser buff_acc, extern_buff_acc;
-
-     extern_data_writer->init_write_extern(internbase + ".tasks.extern");
+     extern_data_writer->init_write_extern(_extern_name);
+     //extern_data_writer->init_write_extern(internbase + ".tasks.extern");
      Buffer *extern_buff = extern_data_writer->get_buffer();
      extern_buff_acc.set_mem(extern_buff->get_db_ptr(), extern_buff->get_db_size());
-
+     bool tostop = false;
      if(num_my_task_buffs < num_total_task_buffs){
-       task_buffer_mgr->init_sequen(internbase + ".tasks", num_my_task_buffs, 1);
+       task_buffer_mgr->init_sequen(internbase + ".task", num_my_task_buffs, 1);
+       tostop = true;
      }
 
      int32_t num_task_buffs_accessed = 0;
      Word *w;
      do{
        for(tbuff_idx = 0; tbuff_idx < num_my_task_buffs; ++tbuff_idx){
-         buff_acc.set_mem(my_task_buffs[tbuff_idx]->get_dataptr(), my_task_buffs[tbuff_idx]->get_data_size());
+         buff_acc.set_mem(my_task_buffs[tbuff_idx]->get_dataptr(),
+                          my_task_buffs[tbuff_idx]->get_data_size());
+         std::cout << "output task_buffs, idx = " << tbuff_idx
+                   << " block_id = " << my_task_buffs[tbuff_idx] << std::endl;
          while(buff_acc.avai_size() > 0){
            w = (Word *) buff_acc.curr_ptr();
            sprintf(templine, "%d\n", w->get_task_id());
@@ -321,7 +327,10 @@ namespace diskstream {
          }
          num_my_task_buffs = 0;
 
-         if(task_buffer_mgr->reached_end()) break;
+         if(task_buffer_mgr->reached_end()){
+           std::cout << "task_buffer_mgr has reached the end!!" << std::endl;
+           break;
+         }
 
          while(!task_buffer_mgr->reached_end() && num_my_task_buffs < num_task_buffs){
            my_task_buffs[num_my_task_buffs] = task_buffer_mgr->get_buffer();
@@ -335,13 +344,16 @@ namespace diskstream {
      extern_data_writer->putback(extern_buff, BufPolicyWriteBack);
      extern_data_writer->stop();
      delete templine;
+     if(tostop)
+       task_buffer_mgr->stop();
      return 0;
    }
 
-   int LdaExecutorInit::output_data_buffers(){
+   int LdaExecutorInit::output_data_buffers(std::string _extern_name){
      char *templine = new char[max_line_len];
      MemChunkAccesser buff_acc, extern_buff_acc;
-     extern_data_writer->init_write_extern(internbase + ".data.extern");
+     extern_data_writer->init_write_extern(_extern_name);
+     //extern_data_writer->init_write_extern(internbase + ".data.extern");
 
      Buffer *extern_buff = extern_data_writer->get_buffer();
      extern_buff_acc.set_mem(extern_buff->get_db_ptr(), extern_buff->get_db_size());
@@ -362,13 +374,13 @@ namespace diskstream {
          sprintf(templine, "%d", num_uwords);
          int32_t i;
          for(i = 0; i < num_uwords; ++i){
+           //std::cout << "strlen(templine) = " << strlen(templine) << std::endl;
            sprintf(templine + strlen(templine), " %d:%d", uwords[i], wcnts[i]);
          }
          int32_t len = strlen(templine);
          templine[len] = '\n';
          ++len;
          if(extern_buff_acc.avai_size() < len){
-           std::cout << "Not enough memory for external data buffer" << std::endl;
            extern_buff->set_valid_db_size(extern_buff->get_db_size() - extern_buff_acc.avai_size());
            extern_data_writer->putback(extern_buff, BufPolicyWriteBack);
            extern_buff = extern_data_writer->get_buffer();
@@ -382,14 +394,27 @@ namespace diskstream {
        }
      }
 
+     std::cout << "num_my_init_data_buffs = " << num_my_init_data_buffs
+               << " num_total_data_buffs = " << num_total_data_buffs << std::endl;
+
      if(num_my_init_data_buffs < num_total_data_buffs){
-       data_buffer_mgr->stop();
        data_buffer_mgr->init_sequen(internbase + ".data", num_my_init_data_buffs, 1);
-       Buffer *data_buff;
+       Buffer *data_buff = NULL;
+       int cnt = 0;
        while(!data_buffer_mgr->reached_end()){
+         if(data_buff != NULL){
+           suc = data_buffer_mgr->putback(data_buff, BufPolicyAbort);
+           assert(suc == 0);
+         }
          data_buff = data_buffer_mgr->get_buffer();
+         assert(data_buff != NULL);
+         std::cout << "get data buffer " << (void *) data_buff
+                   << " block_id = " << data_buff->get_block_id()
+                   << " cnt = " << cnt
+                   << " data size = " << data_buff->get_data_size() << std::endl;
+         ++cnt;
          buff_acc.set_mem(data_buff->get_dataptr(),
-                              data_buff->get_data_size());
+                          data_buff->get_data_size());
          while(buff_acc.avai_size() > 0){
            doc = (Document *) buff_acc.curr_ptr();
            int32_t num_uwords;
@@ -406,17 +431,18 @@ namespace diskstream {
            templine[len] = '\n';
            ++len;
            if(extern_buff_acc.avai_size() < len){
+             extern_buff->set_valid_db_size(extern_buff->get_db_size() - extern_buff_acc.avai_size());
              extern_data_writer->putback(extern_buff, BufPolicyWriteBack);
              extern_buff = extern_data_writer->get_buffer();
              extern_buff_acc.set_mem(extern_buff->get_db_ptr(), extern_buff->get_db_size());
            }
            memcpy(extern_buff_acc.curr_ptr(), templine, len);
-           extern_buff->append_data_record(extern_buff_acc.curr_ptr(), len);
            extern_buff_acc.advance(len);
            suc = buff_acc.advance(doc->size());
            assert(suc == 0);
          }
        }
+       data_buffer_mgr->stop();
      }
      extern_buff->set_valid_db_size(extern_buff->get_db_size() - extern_buff_acc.avai_size());
      extern_data_writer->putback(extern_buff, BufPolicyWriteBack);
@@ -424,9 +450,160 @@ namespace diskstream {
      return 0;
    }
 
+   int LdaExecutorInit::save_status(){
+     std::string fname = get_status_file_name(datadir, internbase);
+     std::fstream ofs(fname.c_str(), std::ios_base::out);
+     ofs << "BuffSize " << buffsize << "\n";
+     ofs << "NumTotalTaskBuffs " << num_total_task_buffs << "\n";
+     ofs << "NumTotalDataBuffs " << num_total_data_buffs << "\n";
+     ofs << "NumTopics " << num_topics << "\n";
+     ofs.close();
+     return 0;
+   }
+
+   int LdaExecutorInit::load_status(){
+     std::string fname = get_status_file_name(datadir, internbase);
+     std::fstream ifs(fname.c_str(), std::ios_base::in);
+     if(!ifs.good()) return -1;
+     std::string s;
+     ifs >> s;
+     ifs >> buffsize;
+     ifs >> s;
+     ifs >> num_total_task_buffs;
+     ifs >> s;
+     ifs >> num_total_data_buffs;
+     ifs.close();
+     return 0;
+   }
+
+   int LdaExecutorInit::execute_one_data(uint8_t *data, int32_t _le, int32_t _ge){
+     Document *doc = (Document *) data;
+     int32_t num_uwords;
+     const int32_t *uwords;
+     uwords = doc->get_task_list(num_uwords);
+     int32_t st, ed;
+     int suc;
+     suc = find_range(uwords, num_uwords, _le, _ge, st, ed);
+     if(suc == 0){
+       int32_t tidx;
+       for(tidx = st; tidx < ed; ++tidx){
+         uint8_t *taskptr = taskloc.get_task_ptr(uwords[tidx]);
+         program->partial_reduce(taskptr, (uint8_t *) doc);
+       }
+     }
+     return 0;
+   }
+
+   int LdaExecutorInit::execute_my_tasks(int32_t _le, int32_t _ge){
+     int suc;
+     MemChunkAccesser buff_acc;
+     Document *doc;
+     int32_t num_data_buffs_accessed = 0;
+
+     std::cout << "execute_my_tasks(): " << "task range, le = " << _le
+               << ", ge = " << _ge << std::endl;
+
+     if(num_my_init_data_buffs > 0){
+       int32_t i;
+       for(i = 0; i < num_my_init_data_buffs; ++i){
+         buff_acc.set_mem(my_init_data_buffs[i]->get_dataptr(),
+                          my_init_data_buffs[i]->get_data_size());
+         while(buff_acc.avai_size() > 0){
+           doc = (Document *) buff_acc.curr_ptr();
+           suc = execute_one_data((uint8_t *) doc, _le, _ge);
+           suc = buff_acc.advance(doc->size());
+           assert(suc == 0);
+         }
+         data_buffer_mgr->putback(my_init_data_buffs[i], BufPolicyWriteBack);
+       }
+       num_data_buffs_accessed  = num_my_init_data_buffs;
+       num_my_init_data_buffs = 0;
+     }
+
+     while(num_data_buffs_accessed < num_total_data_buffs){
+       Buffer *buff;
+       buff = data_buffer_mgr->get_buffer();
+       //std::cout << "get data buffer " << (void *) buff << std::endl;
+       buff_acc.set_mem(buff->get_dataptr(), buff->get_data_size());
+       while(buff_acc.avai_size() > 0){
+         doc = (Document *) buff_acc.curr_ptr();
+         suc = execute_one_data((uint8_t *) doc, _le, _ge);
+         suc = buff_acc.advance(doc->size());
+         assert(suc == 0);
+       }
+       suc = data_buffer_mgr->putback(buff, BufPolicyWriteBack);
+       assert(suc == 0);
+       ++num_data_buffs_accessed;
+     }
+     std::cout << "execute my tasks done!" << std::endl;
+     return 0;
+   }
+
+
+   int LdaExecutorInit::execute_all_tasks(){
+     int32_t tidx;
+     int suc;
+     int32_t num_task_buffs_accessed = 0;
+
+     taskloc.reset_taskid_st(0);
+
+     if(num_my_task_buffs < num_total_task_buffs){
+       suc = task_buffer_mgr->init_sequen(internbase + ".task", num_my_task_buffs, 1);
+       assert(suc == 0);
+       std::cout << "task_buffer_mgr init_sequen done" << std::endl;
+     }
+
+     int32_t num_iters = (num_total_task_buffs + num_task_buffs - 1)/num_task_buffs;
+     std::cout << "number of iterations = " << num_iters << std::endl;
+     suc = data_buffer_mgr->init_sequen(internbase + ".data", num_my_init_data_buffs, num_iters);
+     assert(suc == 0);
+
+     std::cout << "data_buffer_mgr init_sequen done, num_my_init_data_buffs = "
+               << num_my_init_data_buffs << std::endl;
+
+     std::cout << "starting execution, num_task_buffs_accessed = " << num_task_buffs_accessed
+               << " num_total_task_buffs = " << num_total_task_buffs
+               << " num_my_task_buffs = " << num_my_task_buffs
+               << " num_task_buffs = " << num_task_buffs << std::endl;
+
+     int32_t le = 0, ge = -1;
+     while(num_task_buffs_accessed < num_total_task_buffs){
+       taskloc.reset_taskid_st(ge + 1);
+
+       while(num_my_task_buffs < num_task_buffs
+           && !task_buffer_mgr->reached_end()){
+         Buffer *taskbuff = task_buffer_mgr->get_buffer();
+         my_task_buffs[num_my_task_buffs] = taskbuff;
+         ++num_my_task_buffs;
+         //std::cout << "task_buffer_mgr get_buffer() : " << (void *) taskbuff << std::endl;
+       }
+
+       for(tidx = 0; tidx < num_my_task_buffs; ++tidx){
+         suc = taskloc.add_task_buff(my_task_buffs[tidx]);
+         assert(suc == 0);
+       }
+
+       std::cout << "has got task buffers, num_my_task_buffs = " << num_my_task_buffs << std::endl;
+       taskloc.get_range(le, ge);
+       execute_my_tasks(le, ge);
+
+       for(tidx = 0; tidx < num_my_task_buffs; ++tidx){
+         suc = task_buffer_mgr->putback(my_task_buffs[tidx], BufPolicyWriteBack);
+         assert(suc == 0);
+       }
+       num_task_buffs_accessed += num_my_task_buffs;
+       num_my_task_buffs = 0;
+     }
+
+     data_buffer_mgr->stop();
+     task_buffer_mgr->stop();
+     std::cout << "execute all tasks done!" << std::endl;
+     return 0;
+   }
+
    int LdaExecutorInit::init(int64_t _membudget, int32_t _buffsize, int32_t _num_words, int32_t _num_topics,
             std::string _datadir, std::vector<std::string> _extern_data_paths, std::string _internbase,
-            int32_t _max_line_len){
+            int32_t _max_line_len, DiskStreamProgram *_program,  EExecutorMode _exemode){
      membudget = _membudget;
      buffsize = _buffsize;
      num_total_buffs = membudget/buffsize;
@@ -437,8 +614,8 @@ namespace diskstream {
      internbase = _internbase;
      max_line_len = _max_line_len;
      num_tasks_per_buff = Buffer::get_data_capacity(buffsize)/Word::usize(num_topics);
-
-     if(buffsize < KMinTaskBuffs + KMinDataBuffs + KNumExternDataBuffs) return -1;
+     program = _program;
+     exemode = _exemode;
 
      try{
        zmq_ctx = new zmq::context_t(1);
@@ -453,16 +630,29 @@ namespace diskstream {
      suc = diskio->start();
      if(suc < 0) return -1;
 
-     int32_t max_task_buffs = num_total_buffs - KNumExternDataBuffs - KMinDataBuffs;
-     assert(max_task_buffs > 0);
+     if(exemode == ExeRun){
+       load_status();
+       num_total_buffs = membudget/buffsize;
+     }
 
+     int32_t max_task_buffs;
+     if(num_total_buffs < (KMinDataBuffs + KMinTaskBuffs + KNumExternDataBuffs)) return -1;
+     max_task_buffs = num_total_buffs - KMinDataBuffs - KNumExternDataBuffs;
      num_total_task_buffs = (num_total_tasks + num_tasks_per_buff - 1)/num_tasks_per_buff;
-
-     num_task_buffs = (max_task_buffs >= num_total_task_buffs) ? num_total_task_buffs : max_task_buffs;
+     num_task_buffs = std::min(max_task_buffs, num_total_task_buffs);
      num_data_buffs = num_total_buffs - num_task_buffs - KNumExternDataBuffs;
 
      try{
-       extern_data_loader = new BufferManager(KNumExternDataBuffs*buffsize, buffsize, diskio);
+       my_task_buffs = new Buffer *[num_task_buffs];
+       if((exemode == ExeInitRun || exemode == ExeInitOnly)){
+         my_init_data_buffs = new Buffer *[num_data_buffs];
+       }
+     }catch(std::bad_alloc &ba){
+       std::cout << "allocate memory failed" << std::endl;
+       return -1;
+     }
+
+     try{
        task_buffer_mgr = new BufferManager(num_task_buffs*buffsize, buffsize, diskio);
        data_buffer_mgr = new BufferManager(num_data_buffs*buffsize, buffsize, diskio);
        extern_data_writer = new BufferManager(KNumExternDataBuffs*buffsize, buffsize, diskio);
@@ -470,35 +660,108 @@ namespace diskstream {
        return -1;
      }
 
-     try{
-       my_task_buffs = new Buffer *[num_task_buffs];
-       my_init_data_buffs = new Buffer *[num_data_buffs];
-     }catch(std::bad_alloc &ba){
-       std::cout << "allocate memory failed" << std::endl;
-       return -1;
-     }
+     taskloc.init(num_task_buffs, buffsize, Word::usize(num_topics));
+     taskloc.reset_taskid_st(0);
+
+     std::cout << "lda_executor creating internal objects done!" << std::endl;
+
+     std::cout << "init done: "
+               << " num_total_buffs = " << num_total_buffs
+               << " num_task_buffs = " << num_task_buffs
+               << " num_data_buffs = " << num_data_buffs
+               << " num_total_task_buffs = " << num_total_task_buffs
+               << " num_total_data_buffs = " << num_total_data_buffs
+               << std::endl;
+
      return 0;
    }
 
    int LdaExecutorInit::run(){
+     int suc;
 
-     int suc = init_task_buffers();
+     if(exemode == ExeInitRun || exemode == ExeInitOnly){
+       try{
+         extern_data_loader = new BufferManager(KNumExternDataBuffs*buffsize, buffsize, diskio);
+       }catch(...){
+         return -1;
+       }
+       suc = task_buffer_mgr->init(internbase + ".task");
+       if(suc < 0) return -1;
+
+       suc = extern_data_loader->init_sequen_extern(extern_data_paths);
+       if(suc < 0) return -1;
+
+       suc = data_buffer_mgr->init(internbase + ".data");
+       if(suc < 0) return -1;
+
+       suc = init_task_buffers();
+       assert(suc == 0);
+       if(suc < 0) return -1;
+
+       std::cout << "initialized all task buffers, num_my_task_buffers = "
+                 << num_my_task_buffs << std::endl;
+
+       suc = init_data_buffers();
+       assert(suc == 0);
+       std::cout << "initialized all data buffers, num_my_init_data_buffers = "
+                 << num_my_init_data_buffs << std::endl;
+
+       if(suc < 0) return -1;
+
+       save_status();
+
+       if(exemode == ExeInitOnly){
+         int32_t i;
+         for(i = 0; i < num_my_init_data_buffs; ++i){
+           suc = data_buffer_mgr->putback(my_init_data_buffs[i], BufPolicyWriteBack);
+           assert(suc == 0);
+         }
+
+         for(i = 0; i < num_my_task_buffs; ++i){
+           task_buffer_mgr->putback(my_task_buffs[i], BufPolicyWriteBack);
+           assert(suc == 0);
+         }
+
+         delete extern_data_loader;
+         extern_data_loader = NULL;
+         data_buffer_mgr->stop();
+         task_buffer_mgr->stop();
+         return 0;
+       }
+
+       delete extern_data_loader;
+       extern_data_loader = NULL;
+       data_buffer_mgr->stop();
+       task_buffer_mgr->stop();
+     }
+
+     std::cout << "going to execute all tasks once!" << std::endl;
+     int32_t run_time = timer_st();
+     suc = execute_all_tasks();
+     run_time = timer_ed(run_time);
+     std::cout << "execute_all_tasks() takes " << run_time << " micro-seconds" << std::endl;
      if(suc < 0) return -1;
+     return 0;
+   }
 
-     suc = init_data_buffers();
-     if(suc < 0) return -1;
+   int LdaExecutorInit::output_data(){
+     std::string fname;
+     if(exemode == ExeInitOnly){
+       fname = internbase + ".data.extern";
+     }else{
+       fname = internbase + ".data.extern.after";
+     }
+     return output_data_buffers(fname);
+   }
 
-     extern_data_loader->stop();
-     delete extern_data_loader;
-     extern_data_loader = NULL;
-
-     suc = output_task_buffers();
-     if(suc < 0) return -1;
-
-     suc = output_data_buffers();
-     if(suc < 0) return -1;
-
-    return 0;
+   int LdaExecutorInit::output_task(){
+     std::string fname;
+     if(exemode == ExeInitOnly){
+       fname = internbase + ".task.extern";
+     }else{
+       fname = internbase + ".task.extern.after";
+     }
+     return output_task_buffers(fname);
    }
 
    int LdaExecutorInit::cleanup(){

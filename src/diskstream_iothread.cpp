@@ -179,13 +179,11 @@ namespace diskstream{
           extern_cid = zmq_rid_to_cid(cid);
           sock_idx = cid_to_sock_idx(extern_cid);
           diskio->client_valid[sock_idx] = false;
-          std::cout << "canceled " << extern_cid << std::endl;
           break;
         case DiskIOEnable:
           extern_cid = zmq_rid_to_cid(cid);
           sock_idx = cid_to_sock_idx(extern_cid);
           diskio->client_valid[sock_idx] = true;
-          std::cout << "enabled " << extern_cid << std::endl;
           break;
         default:
           assert(0);
@@ -227,6 +225,8 @@ namespace diskstream{
           }
           base = std::string((char *) data.get());
         }
+
+        //std::cout << "request type = " << type << std::endl;
 
         block_id_t bid;
         int32_t extern_size;
@@ -280,16 +280,12 @@ namespace diskstream{
           break;
 
         case DiskIOWrite:
-          //std::cout << "received request to write data" << std::endl;
-          //std::cout << "buf = " << (void *) buf << std::endl;
-          //std::cout << "basename = " << base.c_str() << std::endl;
 
           bid = buf->get_block_id();
 
           dbsize = buf->get_db_size();
           fidx = get_file_idx(bid, dbsize, offset);
           fname = build_filename(diskio->datapath, base, fidx);
-
           // read data from specified file, with
           wsuc = dir_write(buf->get_db_ptr(), dbsize, fname.c_str(), offset);
           re_type = DiskIOWriteDone;
@@ -370,8 +366,6 @@ namespace diskstream{
           }
           break;
         case DiskIOReadExternal:
-          //std::cout << "buf = " << (void *) buf << std::endl;
-          //std::cout << "fullpath = " << base.c_str() << std::endl;
 
           len = recv_msg(diskio->sock, data);
           if(len < 0){
@@ -495,6 +489,7 @@ namespace diskstream{
         case DiskIOConn:
           break;
         default:
+          std::cout << "!!!!!!!!!diskio thread msgtype = " << type << std::endl;
           assert(0);
           diskio->status = -1;
           return NULL;
@@ -597,7 +592,7 @@ namespace diskstream{
                                     int32_t _rd_db_id){
     if(status < 0) return -1;
 
-    EMsgType type = DiskIORead;
+    EMsgType type = DiskIOWriteRead;
     int32_t zid = cid_to_zmq_rid(myid);
     int32_t sock_idx = cid_to_sock_idx(_cid);
 
@@ -738,7 +733,13 @@ namespace diskstream{
   // max file size is 2 GB
   int DiskIOThread::dir_write(const uint8_t *_buff, int32_t _size, const char *_filename,
                               int64_t offset){
+#ifdef REG_IO
+    int fd = open(_filename, O_CREAT | O_WRONLY, S_IRWXU);
+    //std::cout << "use regular io" << std::endl;
+#else
     int fd = open(_filename, O_CREAT | O_WRONLY | O_DIRECT | O_FSYNC, S_IRWXU);
+    //std::cout << "use direct io" << std::endl;
+#endif
     if(fd < 0) return fd;
     lseek(fd, offset, SEEK_SET);
     int suc = writen(fd, _buff, _size);
@@ -768,9 +769,14 @@ namespace diskstream{
 
   int32_t DiskIOThread::dir_read(uint8_t *_buff, int32_t _size, const char *_filename,
                                  int64_t offset){
+#ifdef REG_IO
+    int fd = open(_filename, O_RDONLY);
+    //std::cout << "use regular io" << std::endl;
+#else
     int fd = open(_filename, O_RDONLY | O_DIRECT);
+    //std::cout << "use direct io" << std::endl;
+#endif
     if(fd < 0) return fd;
-    //std::cout << "open file " << _filename << " OK " << std::endl;
     lseek(fd, offset, SEEK_SET);
     int suc = readn(fd, _buff, _size);
     close(fd);
@@ -780,7 +786,7 @@ namespace diskstream{
   int32_t DiskIOThread::get_file_idx(block_id_t bid, int32_t bsize, int64_t &offset){
     int32_t blocks_per_file = KMAX_FSIZE/bsize;
     int32_t fidx = bid/blocks_per_file;
-    offset = bid%blocks_per_file;
+    offset = (bid%blocks_per_file)*bsize;
     return fidx;
   }
 
@@ -791,21 +797,17 @@ namespace diskstream{
   }
 
  std::vector<int32_t> DiskIOThread::get_all_sizes(std::string _basename){
-    DIR *dir;
+   DIR *dir;
     struct dirent *fent;
     dir = opendir(datapath.c_str());
     if(dir == NULL) return std::vector<int32_t>();
-    std::cout << "open dir worked" << std::endl;
     int num_files = 0;
     while((fent = readdir(dir)) != NULL){
-      //int len = strlen(fent->d_name);
-      std::cout << "get file: " << fent->d_name << std::endl;
       int cmp = strncmp(fent->d_name, _basename.c_str(), _basename.size());
       if(cmp == 0) ++num_files;
 
     }
     closedir(dir);
-    std::cout << "num_files = " << num_files << std::endl;
     std::vector<int32_t> fsize(num_files);
     int i;
     for(i = 0; i < num_files; ++i){

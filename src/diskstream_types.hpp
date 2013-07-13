@@ -9,6 +9,7 @@ namespace diskstream {
   enum EBufMgrState {BufMgrInit, BufMgrSequen, BufMgrSequenExtern, BufMgrWriteExtern};
   enum EBufMgrBufPolicy {BufPolicyAbort, BufPolicyWriteBack};
   enum EDataCreateErr {DataCreateIgnore, DataCreateInsufficientMem};
+  enum EExecutorMode {ExeInitRun, ExeInitOnly, ExeRun};
 
   // BufMgrArbitrary is not yet supported.
 

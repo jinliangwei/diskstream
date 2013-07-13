@@ -12,6 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string>
+#include <iostream>
 
 #include "diskstream_buffer.hpp"
 
@@ -99,6 +100,10 @@ namespace diskstream {
       return 0;
     }
   };
+
+  // find the starting and ending indices of the array's values that are in the given range
+  int find_range(const int32_t *_tlist, int32_t _len, int32_t _least, int32_t _greatest,
+                 int32_t &_st, int32_t &_ed);
 }
 
 #endif /* DISKSTREAM_UTIL_HPP_ */

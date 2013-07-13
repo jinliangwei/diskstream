@@ -43,17 +43,26 @@ namespace diskstream{
   }
 
   int BufferManager::sequen_init_all_reads(){
+    std::cout << "sequen_init_all_reads()" << std::endl;
     std::vector<int32_t> fsizes = diskio->get_all_sizes(base);
     int32_t num_files = fsizes.size(), i, buffers_max = 0;
 
     // buffers_max is the maximum number of buffers to be used to load all data in
     for(i = 0; i < num_files; ++i){
-      buffers_max += (fsizes[i] + Buffer::get_data_capacity(buff_size) - 1)/Buffer::get_data_capacity(buff_size);
+      buffers_max += (fsizes[i] + Buffer::get_db_size(buff_size) - 1)/Buffer::get_db_size(buff_size);
+//      std::cout << "Buffer::get_db_size(buff_size) = " << Buffer::get_db_size(buff_size)
+//                << " fsizes[i] = " << fsizes[i] << std::endl;
+
     }
+
     max_db_id = buffers_max - 1;
     putback_id = max_db_id;
 
-    if(next_load_db_id > max_db_id) return -1;
+    if(next_load_db_id > max_db_id){
+      next_load_db_id = 0;
+      ++load_iter;
+      return 0;
+    }
 
     while(free_buff_q.size() > 0 && next_load_db_id <= putback_id){
       Buffer *buff = free_buff_q.front();
@@ -124,13 +133,6 @@ namespace diskstream{
     next_load_db_id = 0;
     bool used_all = false, read_all = false;
 
-    std::cout << "BufferManager::sequen_extern_init_all_reads() "
-              << "curr_file_idx = " << curr_file_idx
-              << " filename = " << seqextern_fullnames[curr_file_idx]
-              << " fsizes = " << fsizes[curr_file_idx]
-             << " max_db_id = " << max_db_id << std::endl;
-    std::cout << "free_buff_q.size() = " << free_buff_q.size()
-              << " free_mem_size = " << free_mem_size << std::endl;
     while((!free_buff_q.empty() || free_mem_size >= buff_size) && !read_all){
       while(curr_file_idx < num_files && next_load_db_id <= max_db_id && !used_all){
 
@@ -155,7 +157,6 @@ namespace diskstream{
           free_buff_q.pop();
         }else if(free_mem_size >= buff_size){
           Buffer *buff = Buffer::create_buffer(buff_size, next_load_db_id);
-          std::cout << "allocated memory for next_load_db_id = " << next_load_db_id << std::endl;
           free_mem_size -= buff_size;
           buffers[buff] = true;
           diskio->sche_read_extern(diskio_cid, buff, seqextern_fullnames[curr_file_idx].c_str(),
@@ -178,7 +179,6 @@ namespace diskstream{
         }
       }
     }
-    std::cout << "sequen_extern_init_all_reads, num_io_buffers = " << num_io_buffers << std::endl;
     return 0;
   }
 
@@ -217,7 +217,7 @@ namespace diskstream{
     putback_iter = 0;
     next_load_db_id = _db_st;
     access_iter = 0;
-    access_db_id = -1;
+    access_db_id = _db_st -1;
     diskio->enable(diskio_cid);
     return sequen_init_all_reads();
   }
@@ -251,10 +251,12 @@ namespace diskstream{
       buffers[buff] = true;
       free_mem_size -= buff_size;
       ++num_assigned_buffers;
+      std::cout << "created new buffer and return" << std::endl;
       return buff;
     }else if(!free_buff_q.empty()){
       Buffer *buff;
       buff = free_buff_q.front();
+      buff->reset_data_block();
       free_buff_q.pop();
       ++num_assigned_buffers;
       return buff;
@@ -269,6 +271,7 @@ namespace diskstream{
         --num_io_buffers;
         assert(type == DiskIOWriteDone || type == DiskIOWriteExternalDone);
         ++num_assigned_buffers;
+        buff->reset_data_block();
         return buff;
       }
     }else{
@@ -292,11 +295,13 @@ namespace diskstream{
     Buffer *buff;
     EMsgType type;
     int32_t bytes;
-    std::cout << "num_io_buffers = " << num_io_buffers << std::endl;
     while(num_io_buffers > 0){
       suc = diskio->get_response(diskio_cid, buff, type, bytes);
+      assert(suc == 0);
       if(suc < 0) return NULL;
-      assert(buff->get_block_id() == access_db_id);
+      //std::cout << "get_buffer_sequen: buffer->get_block_id() = " << buff->get_block_id()
+      //          << " access_db_id = " << access_db_id << std::endl;
+      //std::cout << "diskio return type is " << type << std::endl;
       assert(type == DiskIOReadDone || type == DiskIOWriteReadDone);
       --num_io_buffers;
       ++access_db_id;
@@ -377,35 +382,39 @@ namespace diskstream{
       return 0;
     }
 
+  // TODO: add EPutBackPolicy, depending on putback policy to decide if putback_id should be
+  // incremented
   int BufferManager::putback_sequen(Buffer *_buff, EBufMgrBufPolicy _policy){
+    // current policy: increment putback_id if they are contiguous, do not increment otherwise
     if(putback_id == max_db_id){
-      if(_buff->get_block_id() != 0){
-        return -1;
+      if(_buff->get_block_id() == 0){
+        putback_id = 0;
+        ++putback_iter;
       }
     }else{
-      if(_buff->get_block_id() != (putback_id + 1)){
-        return -1;
+      if(_buff->get_block_id() == (putback_id + 1)){
+        ++putback_id;
       }
     }
 
-    ++putback_id;
-    if(putback_id > max_db_id){
-      putback_id = 0;
-      ++putback_iter;
-    }
     --num_assigned_buffers;
     int suc;
     switch(_policy){
     case BufPolicyAbort:
-      if(load_iter >= max_iter) return 0;
+      if(load_iter >= max_iter){
+        free_buff_q.push(_buff);
+        return 0;
+      }
       // the current buffer is free, schedule it for read
       suc = sequen_sched_read(_buff);
+      assert(suc == 0);
       if(suc < 0) // this read must succeed
         return -1;
       ++num_io_buffers;
       break;
     case BufPolicyWriteBack:
-      if(load_iter >= max_iter){
+      //std::cout << "putback_sequen, load_iter = "
+      if(load_iter <= (max_iter - 1)){
         suc = sequen_sched_writeread(_buff);
         if(suc < 0) return -1;
         ++num_io_buffers;
@@ -477,6 +486,8 @@ namespace diskstream{
     while(num_io_buffers > 0){
       suc = diskio->get_response(diskio_cid, buff, type, bytes);
       if(suc < 0) return -1;
+//      std::cout << "BufferManager::stop() : get_response " << (void *) buff
+//                << " type = " << type << std::endl;
       --num_io_buffers;
       free_buff_q.push(buff);
     }
@@ -486,7 +497,11 @@ namespace diskstream{
   bool BufferManager::reached_end(){
     switch(mgrstate){
     case BufMgrSequen:
-      if(max_iter > 0 && access_iter == max_iter && access_db_id == max_db_id){
+//      std::cout << "reached_end() : "
+//                <<"access_iter = " << access_iter
+//                << " access_db_id = " << access_db_id
+//                << " max_db_id = " << max_db_id << std::endl;
+      if(max_iter > 0 && access_iter == (max_iter - 1) && access_db_id == max_db_id){
         return true;
       }else{
         return false;
@@ -609,6 +624,7 @@ namespace diskstream{
     _buffs.resize(num_free_buffers);
     while(!free_buff_q.empty()){
       Buffer *buff = free_buff_q.front();
+      buff->reset_data_block();
       free_buff_q.pop();
       _buffs[i] = buff;
       buffers[buff] = false;

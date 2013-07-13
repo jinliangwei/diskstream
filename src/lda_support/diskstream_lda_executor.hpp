@@ -15,11 +15,13 @@
 #include <assert.h>
 #include <string>
 
+#include "../diskstream_program.hpp"
 #include "../diskstream_buffermanager.hpp"
 #include "../diskstream_buffer.hpp"
 #include "../diskstream_iothread.hpp"
 #include "../util/diskstream_util.hpp"
 #include "../diskstream_types.hpp"
+#include "../diskstream_tasklocator.hpp"
 
 #include "lda_datastruct.hpp"
 
@@ -45,9 +47,13 @@ namespace diskstream {
     DiskIOThread *diskio;
     RawTextParser *textparser;
 
+    UniSizeTaskLocator taskloc;
+
     /* parameters that are set during initialization and cannot be changed afterwards*/
 
     /* parameters directly set by external arguments */
+    EExecutorMode exemode;
+
     int64_t membudget;
     int32_t buffsize;
     int32_t num_total_tasks; // total number of tasks
@@ -59,7 +65,7 @@ namespace diskstream {
     int32_t num_topics;
     int32_t max_line_len;
 
-    /* parameters that are computed duing init */
+    /* parameters that are computed during init */
     int32_t num_total_buffs;
     int32_t num_task_buffs;
     int32_t num_data_buffs;
@@ -71,14 +77,14 @@ namespace diskstream {
     /* parameters set during the initialization of data buffers and task buffers */
     int32_t num_my_init_data_buffs;
     Buffer **my_init_data_buffs;
-    //int32_t data_buffs_idx;
     int32_t num_total_data_buffs; // number of buffers needed to hold all data
 
     int32_t num_my_task_buffs; // the set of task buffers that I'm currently executing
     Buffer **my_task_buffs;
 
-    int32_t curr_task_st;
-    int32_t curr_task_ed;
+    DiskStreamProgram *program;
+
+    static std::string get_status_file_name(std::string _datadir, std::string _internbase);
 
     // uses data_buff_acc, which could be in any state before invoking this function
     int init_task_buffers();
@@ -86,9 +92,17 @@ namespace diskstream {
 
     // can be called after initialization when all task buffers held are the first N buffers
     // or can be called when all buffers have been put back to task_buffer_mgr
-    int output_task_buffers();
+    int output_task_buffers(std::string _extern_name);
     // can be called after initialization when all
-    int output_data_buffers();
+    int output_data_buffers(std::string _extern_name);
+
+    int save_status();
+    int load_status();
+
+    int execute_one_data(uint8_t *data, int32_t _st, int32_t _ed);
+
+    int execute_my_tasks(int32_t _le, int32_t _ge);
+    int execute_all_tasks();
 
   public:
    LdaExecutorInit();
@@ -96,8 +110,10 @@ namespace diskstream {
 
    int init(int64_t _membudget, int32_t _buffsize, int32_t _num_words, int32_t _num_topics,
             std::string _datadir, std::vector<std::string> _extern_data_paths, std::string _internbase,
-            int32_t _max_line_len);
+            int32_t _max_line_len, DiskStreamProgram *_program, EExecutorMode _exemode = ExeInitRun);
    int run();
+   int output_data();
+   int output_task();
    int cleanup();
   };
 }
