@@ -43,8 +43,9 @@ namespace diskstream{
   }
 
   int BufferManager::sequen_init_all_reads(){
-    std::cout << "sequen_init_all_reads()" << std::endl;
-    std::vector<int32_t> fsizes = diskio->get_all_sizes(base);
+    std::cout << "sequen_init_all_reads() :"
+              << " start loading from db_id = " << next_load_db_id << std::endl;
+    fsizes = diskio->get_all_sizes(base);
     int32_t num_files = fsizes.size(), i, buffers_max = 0;
 
     // buffers_max is the maximum number of buffers to be used to load all data in
@@ -84,6 +85,7 @@ namespace diskstream{
       next_load_db_id = 0;
       ++load_iter;
     }
+    std::cout << "sequen_init_all_reads - num_io_buffers = " << num_io_buffers << std::endl;
     return 0;
   }
 
@@ -120,6 +122,8 @@ namespace diskstream{
     int32_t i;
     for(i = 0; i < (int32_t) fmax_db_ids.size(); ++i){
       fmax_db_ids[i] = -1;
+
+      std::cout << "fsizes[i] = " << fsizes[i] << std::endl;
     }
     int32_t num_files = fsizes.size(), buffers_max = 0;
     curr_file_idx = 0;
@@ -243,7 +247,7 @@ namespace diskstream{
 
 
   Buffer *BufferManager::get_buffer_init(){
-
+    //std::cout << "free_mem_size = " << free_mem_size << std::endl;
     if(free_mem_size >= buff_size){
       Buffer *buff;
       buff = Buffer::create_buffer(buff_size, 0); // I don't care about dbid, user needs to worry
@@ -251,7 +255,7 @@ namespace diskstream{
       buffers[buff] = true;
       free_mem_size -= buff_size;
       ++num_assigned_buffers;
-      std::cout << "created new buffer and return" << std::endl;
+      //std::cout << "created new buffer and return" << std::endl;
       return buff;
     }else if(!free_buff_q.empty()){
       Buffer *buff;
@@ -508,6 +512,10 @@ namespace diskstream{
       }
 
     case BufMgrSequenExtern:
+//      std::cout << "reached_end() :"
+//                << " access_filer_idx = " << access_file_idx
+//                << " access_db_id = " << access_db_id
+//                << " fmax_db_ids = " << fmax_db_ids[access_file_idx] << std::endl;
      if((uint32_t) access_file_idx == seqextern_fullnames.size() - 1
          && access_db_id == fmax_db_ids[access_file_idx]){
         return true;

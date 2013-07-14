@@ -34,7 +34,8 @@ namespace diskstream {
        num_total_data_buffs(0),
        num_my_task_buffs(0),
        my_task_buffs(NULL),
-       program(NULL){}
+       program(NULL),
+       globdata(NULL){}
 
    LdaExecutorInit::~LdaExecutorInit(){
      if(extern_data_loader != NULL){
@@ -166,7 +167,7 @@ namespace diskstream {
      bool last_buff_putback = false;
 
      data_buff = data_buffer_mgr->get_buffer();
-
+     assert(data_buff != NULL);
      int32_t data_buffs_idx = 0;
      data_buff_acc.set_mem(data_buff->get_dataptr(), data_buff->get_data_capacity());
      data_buff->set_block_id(data_buffs_idx);
@@ -177,6 +178,7 @@ namespace diskstream {
 
      assert(!extern_data_loader->reached_end());
 
+     //int32_t total_docs_added = 0;
      while(!extern_data_loader->reached_end()){
        extern_buff = extern_data_loader->get_buffer();
        assert(extern_buff != NULL);
@@ -184,7 +186,7 @@ namespace diskstream {
        // datasize includes the ending '\0', so we need to subtract 1 from it
        suc = textparser->set_textbuf((char *) extern_buff->get_db_ptr(), datasize - 1);
        line_len = textparser->get_next(linebuf);
-
+       //int32_t docs_added = 0;
        while(line_len > 0){
          try{
            doc = new (data_buff_acc.curr_ptr()) Document(data_buff_acc.avai_size(),
@@ -193,7 +195,13 @@ namespace diskstream {
            suc = data_buff_acc.advance(doc->size());
            assert(suc == 0);
            line_len = textparser->get_next(linebuf);
+           //++docs_added;
          }catch(EDataCreateErr &e){
+           //total_docs_added += docs_added;
+           //std::cout << "docs added = " << docs_added
+           //          << " total_docs_added = " << total_docs_added
+           //          << ", then get a new buffer" << std::endl << std::endl;
+           //docs_added = 0;
            if(e == DataCreateInsufficientMem){
              if(num_data_buffs <= (KMinDataBuffsMgr + num_my_init_data_buffs)){
                suc = data_buffer_mgr->putback(data_buff, BufPolicyWriteBack);
@@ -202,7 +210,7 @@ namespace diskstream {
                std::cout << "put back data_buff = " << (void *) data_buff
                          << " block_id = " << data_buff->get_block_id()
                          << " data size = " << data_buff->get_data_size()
-                         << " data capacity = " << data_buff->get_data_capacity() << std::endl;
+                         << " data capacity = " << data_buff->get_data_capacity() << std::endl << std::endl;
                data_buff = data_buffer_mgr->get_buffer();
                assert(data_buff != NULL);
                if(data_buff == NULL) return -1;
@@ -231,6 +239,7 @@ namespace diskstream {
        assert(suc == 0);
      }
      line_len = textparser->get_last(linebuf);
+     //int32_t docs_added = 0;
      if(line_len > 0){
        try{
          doc = new (data_buff_acc.curr_ptr()) Document(data_buff_acc.avai_size(),
@@ -238,15 +247,21 @@ namespace diskstream {
          data_buff->append_data_record(data_buff_acc.curr_ptr(), doc->size());
          suc = data_buff_acc.advance(doc->size());
          assert(suc == 0);
+       //  ++docs_added;
        }catch(EDataCreateErr &e){
+       //  total_docs_added += docs_added;
+       //  std::cout << "docs added = " << docs_added
+       //      << " total_docs_added = " << total_docs_added
+       //      << ", then get a new buffer" << std::endl << std::endl;
+       //  docs_added = 0;
          if(e == DataCreateInsufficientMem){
            if(num_data_buffs <= (KMinDataBuffsMgr + num_my_init_data_buffs)){
              suc = data_buffer_mgr->putback(data_buff, BufPolicyWriteBack);
              assert(suc == 0);
              if(suc < 0) return -1;
-             std::cout << "put back data_buff = " << (void *) data_buff
+             std::cout << " init_data_buffs put back data_buff = " << (void *) data_buff
                        << " block_id = " << data_buff->get_block_id()
-                       << " data size = " << data_buff->get_data_size() << std::endl;
+                       << " data size = " << data_buff->get_data_size() << std::endl << std::endl;
              data_buff = data_buffer_mgr->get_buffer();
              assert(data_buff != NULL);
              if(data_buff == NULL) return -1;
@@ -298,8 +313,8 @@ namespace diskstream {
        for(tbuff_idx = 0; tbuff_idx < num_my_task_buffs; ++tbuff_idx){
          buff_acc.set_mem(my_task_buffs[tbuff_idx]->get_dataptr(),
                           my_task_buffs[tbuff_idx]->get_data_size());
-         std::cout << "output task_buffs, idx = " << tbuff_idx
-                   << " block_id = " << my_task_buffs[tbuff_idx] << std::endl;
+         //std::cout << "output task_buffs, idx = " << tbuff_idx
+         //          << " block_id = " << my_task_buffs[tbuff_idx] << std::endl;
          while(buff_acc.avai_size() > 0){
            w = (Word *) buff_acc.curr_ptr();
            sprintf(templine, "%d\n", w->get_task_id());
@@ -400,7 +415,6 @@ namespace diskstream {
      if(num_my_init_data_buffs < num_total_data_buffs){
        data_buffer_mgr->init_sequen(internbase + ".data", num_my_init_data_buffs, 1);
        Buffer *data_buff = NULL;
-       int cnt = 0;
        while(!data_buffer_mgr->reached_end()){
          if(data_buff != NULL){
            suc = data_buffer_mgr->putback(data_buff, BufPolicyAbort);
@@ -408,11 +422,6 @@ namespace diskstream {
          }
          data_buff = data_buffer_mgr->get_buffer();
          assert(data_buff != NULL);
-         std::cout << "get data buffer " << (void *) data_buff
-                   << " block_id = " << data_buff->get_block_id()
-                   << " cnt = " << cnt
-                   << " data size = " << data_buff->get_data_size() << std::endl;
-         ++cnt;
          buff_acc.set_mem(data_buff->get_dataptr(),
                           data_buff->get_data_size());
          while(buff_acc.avai_size() > 0){
@@ -476,7 +485,7 @@ namespace diskstream {
      return 0;
    }
 
-   int LdaExecutorInit::execute_one_data(uint8_t *data, int32_t _le, int32_t _ge){
+   int LdaExecutorInit::execute_one_data(uint8_t *data, int32_t _le, int32_t _ge, int32_t _niter){
      Document *doc = (Document *) data;
      int32_t num_uwords;
      const int32_t *uwords;
@@ -488,13 +497,13 @@ namespace diskstream {
        int32_t tidx;
        for(tidx = st; tidx < ed; ++tidx){
          uint8_t *taskptr = taskloc.get_task_ptr(uwords[tidx]);
-         program->partial_reduce(taskptr, (uint8_t *) doc);
+         program->partial_reduce(taskptr, (uint8_t *) doc, globdata, _niter, tidx);
        }
      }
      return 0;
    }
 
-   int LdaExecutorInit::execute_my_tasks(int32_t _le, int32_t _ge){
+   int LdaExecutorInit::execute_my_tasks(int32_t _le, int32_t _ge, int32_t _niter){
      int suc;
      MemChunkAccesser buff_acc;
      Document *doc;
@@ -508,9 +517,10 @@ namespace diskstream {
        for(i = 0; i < num_my_init_data_buffs; ++i){
          buff_acc.set_mem(my_init_data_buffs[i]->get_dataptr(),
                           my_init_data_buffs[i]->get_data_size());
+         std::cout << "start executing on data buffer, i = " << i << std::endl;
          while(buff_acc.avai_size() > 0){
            doc = (Document *) buff_acc.curr_ptr();
-           suc = execute_one_data((uint8_t *) doc, _le, _ge);
+           suc = execute_one_data((uint8_t *) doc, _le, _ge, _niter);
            suc = buff_acc.advance(doc->size());
            assert(suc == 0);
          }
@@ -525,9 +535,10 @@ namespace diskstream {
        buff = data_buffer_mgr->get_buffer();
        //std::cout << "get data buffer " << (void *) buff << std::endl;
        buff_acc.set_mem(buff->get_dataptr(), buff->get_data_size());
+       std::cout << "start executing on data buffer, i = " << num_data_buffs_accessed << std::endl;
        while(buff_acc.avai_size() > 0){
          doc = (Document *) buff_acc.curr_ptr();
-         suc = execute_one_data((uint8_t *) doc, _le, _ge);
+         suc = execute_one_data((uint8_t *) doc, _le, _ge, _niter);
          suc = buff_acc.advance(doc->size());
          assert(suc == 0);
        }
@@ -540,23 +551,10 @@ namespace diskstream {
    }
 
 
-   int LdaExecutorInit::execute_all_tasks(){
+   int LdaExecutorInit::execute_all_tasks(int32_t _niter){
      int32_t tidx;
      int suc;
      int32_t num_task_buffs_accessed = 0;
-
-     taskloc.reset_taskid_st(0);
-
-     if(num_my_task_buffs < num_total_task_buffs){
-       suc = task_buffer_mgr->init_sequen(internbase + ".task", num_my_task_buffs, 1);
-       assert(suc == 0);
-       std::cout << "task_buffer_mgr init_sequen done" << std::endl;
-     }
-
-     int32_t num_iters = (num_total_task_buffs + num_task_buffs - 1)/num_task_buffs;
-     std::cout << "number of iterations = " << num_iters << std::endl;
-     suc = data_buffer_mgr->init_sequen(internbase + ".data", num_my_init_data_buffs, num_iters);
-     assert(suc == 0);
 
      std::cout << "data_buffer_mgr init_sequen done, num_my_init_data_buffs = "
                << num_my_init_data_buffs << std::endl;
@@ -571,11 +569,12 @@ namespace diskstream {
        taskloc.reset_taskid_st(ge + 1);
 
        while(num_my_task_buffs < num_task_buffs
-           && !task_buffer_mgr->reached_end()){
+           && (num_task_buffs_accessed + num_my_task_buffs < num_total_task_buffs)){
          Buffer *taskbuff = task_buffer_mgr->get_buffer();
+         std::cout << "get task buffer = " << (void *) taskbuff
+                   << " num_my_task_buffs = " << num_my_task_buffs << std::endl;
          my_task_buffs[num_my_task_buffs] = taskbuff;
          ++num_my_task_buffs;
-         //std::cout << "task_buffer_mgr get_buffer() : " << (void *) taskbuff << std::endl;
        }
 
        for(tidx = 0; tidx < num_my_task_buffs; ++tidx){
@@ -585,7 +584,7 @@ namespace diskstream {
 
        std::cout << "has got task buffers, num_my_task_buffs = " << num_my_task_buffs << std::endl;
        taskloc.get_range(le, ge);
-       execute_my_tasks(le, ge);
+       execute_my_tasks(le, ge, _niter);
 
        for(tidx = 0; tidx < num_my_task_buffs; ++tidx){
          suc = task_buffer_mgr->putback(my_task_buffs[tidx], BufPolicyWriteBack);
@@ -595,15 +594,13 @@ namespace diskstream {
        num_my_task_buffs = 0;
      }
 
-     data_buffer_mgr->stop();
-     task_buffer_mgr->stop();
      std::cout << "execute all tasks done!" << std::endl;
      return 0;
    }
 
-   int LdaExecutorInit::init(int64_t _membudget, int32_t _buffsize, int32_t _num_words, int32_t _num_topics,
+   int LdaExecutorInit::init(int64_t _membudget, int64_t _buffsize, int32_t _num_words, int32_t _num_topics,
             std::string _datadir, std::vector<std::string> _extern_data_paths, std::string _internbase,
-            int32_t _max_line_len, DiskStreamProgram *_program,  EExecutorMode _exemode){
+            int32_t _max_line_len, DiskStreamProgram *_program, uint8_t *_globdata, EExecutorMode _exemode){
      membudget = _membudget;
      buffsize = _buffsize;
      num_total_buffs = membudget/buffsize;
@@ -616,6 +613,7 @@ namespace diskstream {
      num_tasks_per_buff = Buffer::get_data_capacity(buffsize)/Word::usize(num_topics);
      program = _program;
      exemode = _exemode;
+     globdata = _globdata;
 
      try{
        zmq_ctx = new zmq::context_t(1);
@@ -676,15 +674,18 @@ namespace diskstream {
      return 0;
    }
 
-   int LdaExecutorInit::run(){
+   int LdaExecutorInit::run(int32_t _num_iters){
      int suc;
-
+     int64_t accum_time = 0;
+     int64_t last_time = timer_st();
+     int64_t run_time;
      if(exemode == ExeInitRun || exemode == ExeInitOnly){
        try{
          extern_data_loader = new BufferManager(KNumExternDataBuffs*buffsize, buffsize, diskio);
        }catch(...){
          return -1;
        }
+
        suc = task_buffer_mgr->init(internbase + ".task");
        if(suc < 0) return -1;
 
@@ -694,17 +695,25 @@ namespace diskstream {
        suc = data_buffer_mgr->init(internbase + ".data");
        if(suc < 0) return -1;
 
+       std::cout << "start initializing task buffers curr_time = " << accum_time << std::endl;
+       last_time = timer_st();
        suc = init_task_buffers();
        assert(suc == 0);
        if(suc < 0) return -1;
 
-       std::cout << "initialized all task buffers, num_my_task_buffers = "
-                 << num_my_task_buffs << std::endl;
+       run_time = timer_ed(last_time);
+       accum_time += run_time;
+       std::cout << "done initializing task buffers curr_time = " << accum_time << std::endl;
+
+       std::cout << "start initializing data buffers curr_time = " << accum_time << std::endl;
+       last_time = timer_st();
 
        suc = init_data_buffers();
        assert(suc == 0);
-       std::cout << "initialized all data buffers, num_my_init_data_buffers = "
-                 << num_my_init_data_buffs << std::endl;
+
+       run_time = timer_ed(last_time);
+       accum_time += run_time;
+       std::cout << "done initializing data buffers curr_time = " << accum_time << std::endl;
 
        if(suc < 0) return -1;
 
@@ -735,12 +744,39 @@ namespace diskstream {
        task_buffer_mgr->stop();
      }
 
-     std::cout << "going to execute all tasks once!" << std::endl;
-     int32_t run_time = timer_st();
-     suc = execute_all_tasks();
-     run_time = timer_ed(run_time);
-     std::cout << "execute_all_tasks() takes " << run_time << " micro-seconds" << std::endl;
-     if(suc < 0) return -1;
+     int32_t num_task_iters = _num_iters;
+     if(num_my_task_buffs == num_total_task_buffs)
+       --num_task_iters;
+
+     if(_num_iters > 0){
+       suc = task_buffer_mgr->init_sequen(internbase + ".task", num_my_task_buffs, _num_iters);
+       assert(suc == 0);
+       std::cout << "task_buffer_mgr init_sequen done" << std::endl;
+     }
+
+     int32_t num_data_iters = (num_total_task_buffs + num_task_buffs - 1)/num_task_buffs;
+     suc = data_buffer_mgr->init_sequen(internbase + ".data", num_my_init_data_buffs,
+                                        num_data_iters*_num_iters);
+     assert(suc == 0);
+
+     std::cout << "start executing tasks curr_time = " << accum_time << std::endl;
+
+     int32_t iter;
+     for(iter = 0; iter < _num_iters; ++iter){
+       last_time = timer_st();
+
+       suc = execute_all_tasks(iter);
+       if(suc < 0) return -1;
+
+       run_time = timer_ed(last_time);
+       accum_time += run_time;
+       std::cout << "executed iteration = " << iter << " curr_time = " << accum_time << std::endl;
+     }
+
+     data_buffer_mgr->stop();
+     task_buffer_mgr->stop();
+
+
      return 0;
    }
 

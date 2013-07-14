@@ -796,11 +796,11 @@ namespace diskstream{
     return ss.str();
   }
 
- std::vector<int32_t> DiskIOThread::get_all_sizes(std::string _basename){
+ std::vector<int64_t> DiskIOThread::get_all_sizes(std::string _basename){
    DIR *dir;
     struct dirent *fent;
     dir = opendir(datapath.c_str());
-    if(dir == NULL) return std::vector<int32_t>();
+    if(dir == NULL) return std::vector<int64_t>();
     int num_files = 0;
     while((fent = readdir(dir)) != NULL){
       int cmp = strncmp(fent->d_name, _basename.c_str(), _basename.size());
@@ -808,27 +808,27 @@ namespace diskstream{
 
     }
     closedir(dir);
-    std::vector<int32_t> fsize(num_files);
+    std::vector<int64_t> fsize(num_files);
     int i;
     for(i = 0; i < num_files; ++i){
       struct stat fstat;
       int fstat_suc = stat(build_filename(datapath, _basename, i).c_str(), &fstat);
-      if(fstat_suc < 0) return std::vector<int32_t>();
-      int32_t fs = fstat.st_size;
+      if(fstat_suc < 0) return std::vector<int64_t>();
+      int64_t fs = fstat.st_size;
       fsize[i] = fs;
     }
     return fsize;
   }
 
- std::vector<int32_t> DiskIOThread::get_all_sizes(std::vector<std::string> _fnames){
+ std::vector<int64_t> DiskIOThread::get_all_sizes(std::vector<std::string> _fnames){
    int32_t num_files = _fnames.size();
-   std::vector<int32_t> fsize(num_files);
+   std::vector<int64_t> fsize(num_files);
    int i;
    for(i = 0; i < num_files; ++i){
      struct stat fstat;
      int fstat_suc = stat(_fnames[i].c_str(), &fstat);
-     if(fstat_suc < 0) return std::vector<int32_t>();
-     int32_t fs = fstat.st_size;
+     if(fstat_suc < 0) return std::vector<int64_t>();
+     int64_t fs = fstat.st_size;
      fsize[i] = fs;
    }
    return fsize;

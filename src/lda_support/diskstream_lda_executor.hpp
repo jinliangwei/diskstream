@@ -28,7 +28,7 @@
 namespace diskstream {
   static const std::string KDiskIOEndp = "inproc://ldaexecutor_diskio_endp";
   static const int32_t KMinTaskBuffs = 4;
-  static const int32_t KMinDataBuffs = 4;
+  static const int32_t KMinDataBuffs = 8;
   static const int32_t KNumExternDataBuffs = 2;
   // mininum number of buffers to be held by BufferManager during init phase to ensure I/O
   // efficiency
@@ -55,7 +55,7 @@ namespace diskstream {
     EExecutorMode exemode;
 
     int64_t membudget;
-    int32_t buffsize;
+    int64_t buffsize;
     int32_t num_total_tasks; // total number of tasks
 
     std::string datadir; // path to directory to store internal data file
@@ -83,6 +83,7 @@ namespace diskstream {
     Buffer **my_task_buffs;
 
     DiskStreamProgram *program;
+    uint8_t *globdata;
 
     static std::string get_status_file_name(std::string _datadir, std::string _internbase);
 
@@ -99,19 +100,19 @@ namespace diskstream {
     int save_status();
     int load_status();
 
-    int execute_one_data(uint8_t *data, int32_t _st, int32_t _ed);
+    int execute_one_data(uint8_t *data, int32_t _st, int32_t _ed, int32_t _niter);
 
-    int execute_my_tasks(int32_t _le, int32_t _ge);
-    int execute_all_tasks();
+    int execute_my_tasks(int32_t _le, int32_t _ge, int32_t _niter);
+    int execute_all_tasks(int32_t _niter);
 
   public:
    LdaExecutorInit();
    ~LdaExecutorInit();
 
-   int init(int64_t _membudget, int32_t _buffsize, int32_t _num_words, int32_t _num_topics,
+   int init(int64_t _membudget, int64_t _buffsize, int32_t _num_words, int32_t _num_topics,
             std::string _datadir, std::vector<std::string> _extern_data_paths, std::string _internbase,
-            int32_t _max_line_len, DiskStreamProgram *_program, EExecutorMode _exemode = ExeInitRun);
-   int run();
+            int32_t _max_line_len, DiskStreamProgram *_program, uint8_t *_globdata, EExecutorMode _exemode = ExeInitRun);
+   int run(int32_t _num_iters);
    int output_data();
    int output_task();
    int cleanup();

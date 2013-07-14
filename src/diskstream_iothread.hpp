@@ -105,8 +105,8 @@ namespace diskstream {
                          int32_t _size);
     int get_response(int32_t _cid, Buffer * &_buff, EMsgType &_type, int32_t &_suc);
 
-    std::vector<int32_t> get_all_sizes(std::string _basename);
-    static std::vector<int32_t> get_all_sizes(std::vector<std::string> _fnames);
+    std::vector<int64_t> get_all_sizes(std::string _basename);
+    static std::vector<int64_t> get_all_sizes(std::vector<std::string> _fnames);
 
   };
 }

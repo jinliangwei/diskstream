@@ -220,4 +220,20 @@ namespace diskstream {
     return 0;
   }
 
+  int32_t binary_search_exact(int32_t *array, int32_t len, int32_t val){
+    int32_t begin = 0;
+    int32_t end = len - 1;
+    int32_t m = (begin + end)/2;
+    while(array[m] != val){
+      if(array[m] < val){
+        begin = m + 1;
+        m = (begin + end)/2;
+      }else{
+        end = m - 1;
+        m = (begin + end)/2;
+      }
+      if(begin > end) return -1;
+    }
+    return m;
+  }
 }

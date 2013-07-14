@@ -14,13 +14,12 @@ namespace boost_po = boost::program_options;
 using namespace diskstream;
 
 #include <diskstream_program.hpp>
-#include <lda_support/lda_program.hpp>
 
 int main(int argc, char *argv[]){
 
   const uint32_t KMAX_LINE_LENGTH = 1024*1024*2; // 2MB
   const int64_t KOneMega = (1024*1024);
-  const int32_t RNG_SEED = 12345;
+
   std::string datapath;
   int32_t buff_size; // number of MBs
   int32_t membudget;
@@ -48,7 +47,7 @@ int main(int argc, char *argv[]){
   boost_po::notify(options_map);
 
   std::cout << "diskstream lda starts here" << std::endl;
-  std::cout << "external data file is " << datapath << std::endl;
+
   EExecutorMode emode;
   switch(exemode){
   case 0:
@@ -67,12 +66,10 @@ int main(int argc, char *argv[]){
   LdaExecutorInit lda_executor;
   std::vector<std::string> extern_data(1);
   extern_data[0] = datapath;
-  LdaProgram dprog;
-  LdaSampler sampler(0.1, 0.1, RNG_SEED);
-  sampler.init(num_topics, num_words);
+  DiskStreamProgram dprog;
   int suc = lda_executor.init(((int64_t) membudget)*KOneMega, buff_size*KOneMega, num_words,
                               num_topics, datadir, extern_data, basename, KMAX_LINE_LENGTH,
-                              &dprog, (uint8_t *) &sampler, emode);
+                              &dprog, NULL, emode);
   assert(suc == 0);
 
   int32_t run_time = timer_st();

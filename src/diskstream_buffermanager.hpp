@@ -51,7 +51,7 @@ namespace diskstream {
     // needed by BufMgrSequenExtern
     int32_t extern_read_size;
     std::vector<std::string> seqextern_fullnames;
-    std::vector<int32_t> fsizes;
+    std::vector<int64_t> fsizes;
     std::vector<int32_t> fmax_db_ids;
 
     int32_t curr_file_idx;

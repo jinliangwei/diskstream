@@ -11,13 +11,14 @@ namespace diskstream {
     int64_t cnt2;
   public:
     DiskStreamProgram();
-    ~DiskStreamProgram();
+    virtual ~DiskStreamProgram();
 
-    int partial_reduce(uint8_t *task, uint8_t *data);
+    virtual int partial_reduce(uint8_t *task, uint8_t *data, uint8_t *globdata, int32_t niter,
+                       int32_t task_idx); // task_idx is the idx of the task in the data's task list
 
-    int summarize(uint8_t *task);
+    virtual int summarize(uint8_t *task);
 
-    int end_iteration();
+    virtual int end_iteration();
 
     int64_t get_cnt();
   };

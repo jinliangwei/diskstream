@@ -119,7 +119,7 @@ namespace diskstream {
       wid_list.sort();
       std::list<int32_t>::iterator it = wid_list.begin();
       for(it = wid_list.begin(); it != wid_list.end();++it){
-        int32_t wfreq = rng()%(max_word_freq + 1);
+        int32_t wfreq = rng()%max_word_freq + 1;
         sprintf(templine_lda + strlen(templine_lda), " %d:%d", *it, wfreq);
         sprintf(templine_edgelist + strlen(templine_edgelist), "%d %d %d\n",
               *it, curr_doc_id, wfreq);
