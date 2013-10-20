@@ -28,7 +28,7 @@
 namespace diskstream {
   static const std::string KDiskIOEndp = "inproc://ldaexecutor_diskio_endp";
   static const int32_t KMinTaskBuffs = 4;
-  static const int32_t KMinDataBuffs = 8;
+  static const int32_t KMinDataBuffs = 4;
   static const int32_t KNumExternDataBuffs = 2;
   // mininum number of buffers to be held by BufferManager during init phase to ensure I/O
   // efficiency

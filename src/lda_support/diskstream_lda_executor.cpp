@@ -749,14 +749,15 @@ namespace diskstream {
        --num_task_iters;
 
      if(_num_iters > 0){
-       suc = task_buffer_mgr->init_sequen(internbase + ".task", num_my_task_buffs, _num_iters);
+       suc = task_buffer_mgr->init_sequen(internbase + ".task", num_my_task_buffs, _num_iters,
+                                          num_total_task_buffs);
        assert(suc == 0);
        std::cout << "task_buffer_mgr init_sequen done" << std::endl;
      }
 
      int32_t num_data_iters = (num_total_task_buffs + num_task_buffs - 1)/num_task_buffs;
      suc = data_buffer_mgr->init_sequen(internbase + ".data", num_my_init_data_buffs,
-                                        num_data_iters*_num_iters);
+                                        num_data_iters*_num_iters, num_total_data_buffs);
      assert(suc == 0);
 
      std::cout << "start executing tasks curr_time = " << accum_time << std::endl;

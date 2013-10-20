@@ -61,7 +61,7 @@ namespace diskstream {
 
     int64_t extern_write_offset;
 
-    int sequen_init_all_reads();
+    int sequen_init_all_reads(int32_t _max_dbs = -1);
     int sequen_sched_read(Buffer *_buff);
     int sequen_sched_writeread(Buffer *_buff);
 
@@ -82,7 +82,7 @@ namespace diskstream {
     ~BufferManager();
 
     int init(std::string _base);
-    int init_sequen(std::string _base, int32_t _db_st, int32_t _max_iter);
+    int init_sequen(std::string _base, int32_t _db_st, int32_t _max_iter, int32_t _max_dbs = -1);
     int init_sequen_extern(std::vector<std::string> _fullnames);
     int init_write_extern(std::string _fullname);
 

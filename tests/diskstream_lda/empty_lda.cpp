@@ -79,10 +79,10 @@ int main(int argc, char *argv[]){
 
   std::cout << "lda_executor.run() takes " << run_time << " micro-seconds" << std::endl;
 
-  suc = lda_executor.output_data();
-  assert(suc == 0);
-  suc = lda_executor.output_task();
-  assert(suc == 0);
+  //suc = lda_executor.output_data();
+  //assert(suc == 0);
+  //suc = lda_executor.output_task();
+  //assert(suc == 0);
 
   lda_executor.cleanup();
 

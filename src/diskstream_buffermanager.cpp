@@ -42,21 +42,22 @@ namespace diskstream{
     }
   }
 
-  int BufferManager::sequen_init_all_reads(){
+  int BufferManager::sequen_init_all_reads(int32_t _max_dbs){
     std::cout << "sequen_init_all_reads() :"
               << " start loading from db_id = " << next_load_db_id << std::endl;
-    fsizes = diskio->get_all_sizes(base);
-    int32_t num_files = fsizes.size(), i, buffers_max = 0;
 
-    // buffers_max is the maximum number of buffers to be used to load all data in
-    for(i = 0; i < num_files; ++i){
-      buffers_max += (fsizes[i] + Buffer::get_db_size(buff_size) - 1)/Buffer::get_db_size(buff_size);
-//      std::cout << "Buffer::get_db_size(buff_size) = " << Buffer::get_db_size(buff_size)
-//                << " fsizes[i] = " << fsizes[i] << std::endl;
+    if(_max_dbs > 0){
+      max_db_id = _max_dbs - 1;
+    }else{
+      fsizes = diskio->get_all_sizes(base);
+      int32_t num_files = fsizes.size(), i, buffers_max = 0;
 
+      // buffers_max is the maximum number of buffers to be used to load all data in
+      for(i = 0; i < num_files; ++i){
+        buffers_max += (fsizes[i] + Buffer::get_db_size(buff_size) - 1)/Buffer::get_db_size(buff_size);
+      }
+      max_db_id = buffers_max - 1;
     }
-
-    max_db_id = buffers_max - 1;
     putback_id = max_db_id;
 
     if(next_load_db_id > max_db_id){
@@ -211,7 +212,7 @@ namespace diskstream{
     return 0;
   }
 
-  int BufferManager::init_sequen(std::string _base, int32_t _db_st, int32_t _max_iter){
+  int BufferManager::init_sequen(std::string _base, int32_t _db_st, int32_t _max_iter, int32_t _max_dbs){
     if(_db_st < 0) return -1;
     if(_max_iter == 0) return -1;
     mgrstate = BufMgrSequen;
@@ -223,7 +224,7 @@ namespace diskstream{
     access_iter = 0;
     access_db_id = _db_st -1;
     diskio->enable(diskio_cid);
-    return sequen_init_all_reads();
+    return sequen_init_all_reads(_max_dbs);
   }
 
   int BufferManager::init_sequen_extern(std::vector<std::string> _fullnames){
